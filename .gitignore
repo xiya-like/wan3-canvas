@@ -1,0 +1,27 @@
+__pycache__/
+*.pyc
+
+# 密钥与私密配置：只推 .env.example 模板
+.env
+.env.*
+!.env.example
+
+# 素材目录：临时上传每次启动即清空，成片与生图结果是本地产物，不入库
+uploads/
+cache/
+media/
+
+# 测试产物
+test_*_out.txt
+
+# 无头浏览器的临时 profile（_edge_profile / _media_profile / _up_profile …）
+*_profile*/
+
+# 截图与临时页面
+_shot.png
+_zshot.png
+_tmp_*
+
+*.log
+Thumbs.db
+.DS_Store
