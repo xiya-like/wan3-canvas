@@ -906,6 +906,77 @@ PROBE = r"""
       ok('文本镜像态没有输入前缀', !nodeEl(v2.id).querySelector('.promptPre'));
     })();
 
+    /* ---- 32. 双击块名进入重命名（原站行为，见截图 2026-10-16 221625 / 221653） ----
+       原来只有 F2 和右键菜单能改名，双击名称没反应。 */
+    (function(){
+      function dbl(target){
+        mouse(target, 'mousedown'); mouse(target, 'mouseup'); mouse(target, 'click');
+        mouse(target, 'mousedown'); mouse(target, 'mouseup'); mouse(target, 'click');
+        target.dispatchEvent(new MouseEvent('dblclick', {bubbles:true, cancelable:true, view:window}));
+      }
+      W.S.nodes.length = 0; W.S.edges.length = 0; W.S.sel = null; W.S.renaming = null;
+      var v = W.addNode('video', 120, 120);
+      W.render();
+
+      var nameEl = nodeEl(v.id).querySelector('.nName');
+      ok('块名渲染成可识别的 .nName', !!nameEl);
+
+      // 光标双击那一瞬间 <b> 必须还在文档里，否则后面全白测
+      mouse(nameEl, 'mousedown'); mouse(nameEl, 'mouseup');
+      ok('双击过程中块名没有被重建掉', nameEl.isConnected);
+      mouse(nameEl, 'click');
+
+      dbl(nameEl);
+      var inp = nodeEl(v.id).querySelector('.nRename');
+      ok('双击块名进入重命名态', !!inp);
+      ok('重命名输入框自动获得焦点', document.activeElement === inp,
+         'active=' + (document.activeElement ? document.activeElement.className : 'null'));
+      ok('重命名态下原名不再是 <b>', !nodeEl(v.id).querySelector('.nName'));
+
+      // 输入并回车
+      inp.value = '我的短片';
+      inp.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true}));
+      ok('回车后名称写进状态', W.S.nodes.filter(function(n){ return n.id === v.id; })[0].name === '我的短片',
+         JSON.stringify(W.S.nodes.filter(function(n){ return n.id === v.id; })[0].name));
+      ok('回车后退出重命名态', !nodeEl(v.id).querySelector('.nRename'));
+      ok('回车后显示新名称',
+         nodeEl(v.id).querySelector('.nName').textContent === '我的短片',
+         nodeEl(v.id).querySelector('.nName').textContent);
+
+      // Esc 取消：名字不该被改
+      dbl(nodeEl(v.id).querySelector('.nName'));
+      var inp2 = nodeEl(v.id).querySelector('.nRename');
+      ok('再次双击可重命名', !!inp2);
+      inp2.value = '不该保存';
+      inp2.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}));
+      ok('Esc 放弃修改', W.S.nodes.filter(function(n){ return n.id === v.id; })[0].name === '我的短片',
+         JSON.stringify(W.S.nodes.filter(function(n){ return n.id === v.id; })[0].name));
+
+      // 「任何一个块」都要能改名
+      ['text','image','video'].forEach(function(tp){
+        var n = W.addNode(tp, 400, 300);
+        W.render();
+        dbl(nodeEl(n.id).querySelector('.nName'));
+        ok(tp + '块双击名称也能进入重命名', !!nodeEl(n.id).querySelector('.nRename'));
+        W.S.renaming = null; W.render();
+      });
+
+      // 标题栏别处双击仍然是拖动块，不该误触发重命名
+      W.S.renaming = null;
+      var img2 = W.addNode('image', 700, 300);
+      W.render();
+      var head = nodeEl(img2.id).querySelector('.nHead');
+      dbl(head);
+      ok('双击标题栏空白处不触发重命名', !nodeEl(img2.id).querySelector('.nRename'));
+
+      // F2 这条老路不能被改坏
+      W.S.sel = img2.id;
+      mouse(head, 'keydown');
+      document.dispatchEvent(new KeyboardEvent('keydown', {key:'F2', bubbles:true}));
+      ok('F2 仍然能进入重命名', !!nodeEl(img2.id).querySelector('.nRename'));
+      W.S.renaming = null; W.render();
+    })();
+
   } catch (err){
     R.push('FAIL | 探针抛异常 | ' + (err && err.message ? err.message : String(err)) + ' @ ' + (err && err.stack ? String(err.stack).split('\n')[1] : ''));
     flush();

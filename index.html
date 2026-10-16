@@ -120,7 +120,11 @@ button{cursor:pointer;background:none;border:none}
 .nRole{font-size:9.5px;padding:1px 5px;border-radius:10px;border:1px solid var(--line);color:var(--tx3);flex:none;white-space:nowrap}
 .nRole.src{border-color:#1d4429;color:var(--ok)}
 .nRole.gen{border-color:#4a3a12;color:var(--warn)}
-.nRename{width:100%;background:#17171a;border:1px solid var(--ac);border-radius:5px;padding:1px 4px;font-size:12.5px;outline:none}
+/* 重命名态：原站双击块名后名称会整块变蓝（见原站截图 2026-10-16 221625），
+   所以这里用蓝调底色 + 蓝色文字，而不是普通的深色输入框。 */
+.nRename{width:100%;background:#2c3054;border:1px solid var(--ac);border-radius:5px;
+  padding:1px 4px;font-size:12.5px;outline:none;color:#aebcff;caret-color:var(--ac)}
+.nRename::placeholder{color:#6a6f9c}
 .nBody{padding:9px 10px;display:flex;flex-direction:column;gap:7px;font-size:11.5px;color:var(--tx2)}
 textarea.prompt{width:100%;min-height:62px;resize:vertical;background:#17171a;border:1px solid var(--line);border-radius:8px;padding:7px 9px;font-size:12px;line-height:1.55;outline:none;color:var(--tx)}
 textarea.prompt:focus{border-color:var(--ac)}
@@ -820,7 +824,7 @@ function nodeHTML(n){
       '<div class="ico" style="color:' + p.color + '">' + p.ico + '</div>' +
       (S.renaming === n.id
         ? '<input class="nRename" data-rename="' + n.id + '" value="' + esc(n.name) + '" placeholder="' + esc(nodeName(n)) + '">'
-        : '<b>' + esc(nodeName(n)) + '</b>') +
+        : '<b class="nName" data-node="' + n.id + '" title="双击重命名">' + esc(nodeName(n)) + '</b>') +
       '<span class="nRole' + cls + '">' + rl + '</span>' + badge +
     '</div>' +
     '<div class="nBody">' + bodyHTML(n) + '</div>';
@@ -932,7 +936,17 @@ function restoreMedia(list, root){
   });
 }
 
+// 渲染防重入：移除节点会让正在聚焦的输入框同步触发 blur，
+// 重命名输入框的 blur 处理里会调 render()，于是 render 套 render，
+// 内层把刚摘掉的节点又摘一次，直接抛 "node to be removed is no longer a child"。
+// 外层这一遍本来就会用最新状态重建节点，内层那次直接丢弃即可。
+let _rendering = false;
 function render(){
+  if (_rendering) return;
+  _rendering = true;
+  try { renderInner(); } finally { _rendering = false; }
+}
+function renderInner(){
   const W = $('#world');
   const media = stashMedia(W);
   W.querySelectorAll('.node').forEach(e => e.remove());
@@ -1279,6 +1293,8 @@ function startRename(id){
   if (!el) return;
   el.focus(); el.select();
   const done = commit => {
+    if (el.__done) return;        // blur 与 keydown 可能都来，只认第一次
+    el.__done = true;
     if (commit && S.renaming === id) nodeById(id).name = el.value.trim();
     S.renaming = null;
     render();
@@ -1376,6 +1392,17 @@ function initCanvas(){
     }
     render();
     e.preventDefault();
+  });
+
+  // 双击块名进入重命名（原站行为，见截图 2026-10-16 221625）。
+  // 单独用 dblclick 而不是复用 mousedown：一次双击会带来两轮 mousedown，
+  // 那两轮已经在拖动分支里正常走完（mouseup 只调 renderHud/renderEdges，不重建节点），
+  // 所以这里的 <b> 一定还连在文档上，closest 能照常找到所属块。
+  wrap.addEventListener('dblclick', e => {
+    const nameEl = e.target.closest && e.target.closest('.nName');
+    if (!nameEl) return;                     // 只认名称本身，标题栏别处双击还是拖动块
+    e.preventDefault();
+    startRename(nameEl.dataset.node);
   });
 
   wrap.addEventListener('mousemove', e => {
