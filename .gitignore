@@ -19,6 +19,7 @@ test_*_out.txt
 
 # 截图与临时页面
 _shot.png
+_shot_*.png
 _zshot.png
 _tmp_*
 

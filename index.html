@@ -129,11 +129,8 @@ textarea.prompt:disabled{opacity:.6}
 .opts{display:flex;flex-direction:column;gap:5px}
 .opt{text-align:left;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:#17171a;font-size:12px;color:var(--tx2);transition:.12s}
 .opt:hover{border-color:var(--ac);color:var(--tx);background:#1f1f24}
+.opt.on{border-color:var(--ac);color:var(--ac)}
 .optRow{display:flex;align-items:center;gap:6px;margin-top:4px}
-.ways{display:flex;gap:4px;flex-wrap:wrap}
-.way{padding:4px 8px;border:1px solid var(--line);border-radius:12px;font-size:11px;color:var(--tx3);transition:.12s}
-.way:hover{border-color:var(--ac);color:var(--tx2)}
-.way.on{background:var(--ac);border-color:var(--ac);color:#fff;font-weight:600}
 .chips{display:flex;gap:4px;flex-wrap:wrap}
 .chip{font-size:10.5px;padding:2px 7px;border-radius:10px;border:1px solid var(--line);color:var(--tx3);background:#17171a}
 .chip.img{border-color:#5c3a1d;color:#c98a4b}
@@ -718,23 +715,27 @@ function bodyHTML(n){
   if (r === 'imageGen'){
     const refs = upstreamImages(n);
     const p = n.imgParams;
-    const wayNow = imgWay(n);
     const chips = refs.length
       ? '<div class="chips" style="margin-top:4px">' + refs.map((u, i) =>
           '<span class="chip img">@图片' + (i+1) + '</span>').join('') + '</div>'
       : '';
     const maxRefs = (S.cfg.imageModels.find(m => m.id === p.model) || {}).maxRefs || 3;
+    // 原站规则：图片块只要和任何节点连上（无论进还是出），这几个入口就全部收起。
+    // 与视频块的判定不同 —— 图片块往视频块送料时它是源，但原站照样不显示这些按钮。
+    const linked = S.edges.some(e => e.from === n.id || e.to === n.id);
+    // 只留「上传 / 参考图生图 / 风格化转绘」。
+    // 自动：本来就反映不出实际状态；文生图：直接在输入框打字即可；
+    // 图生图：与参考图生图是同一件事，不该并列出现。
+    const ways = linked ? '' :
+      '<div class="opts" style="margin-top:5px">' +
+        '<button class="opt" data-act="upImg">↑ 图片上传</button>' +
+        '<button class="opt' + (p.way === 'ref' ? ' on' : '') + '" data-way="ref">↗ 参考图生图</button>' +
+        '<button class="opt' + (p.way === 'stylize' ? ' on' : '') + '" data-way="stylize">✧ 风格化转绘</button>' +
+      '</div>';
     return '<textarea class="prompt' + (mt.on ? ' mirror' : '') + '" data-bind="imgPrompt"' +
         (mt.on ? ' readonly' : '') + ' placeholder="' +
         (mt.on ? '' : refs.length ? '描述要如何改造这张参考图…' : '描述你想要的画面…') + '">' + esc(mt.on ? mt.text : n.imgPrompt) + '</textarea>' +
-      chips +
-      '<div class="ways" style="margin-top:4px">' +
-        '<button class="way' + (p.way === 'auto' ? ' on' : '') + '" data-way="auto">自动</button>' +
-        '<button class="way' + (wayNow === 't2i' && p.way === 'auto' ? '' : (p.way === 't2i' ? ' on' : '')) + '" data-way="t2i">文生图</button>' +
-        '<button class="way' + (p.way === 'i2i' ? ' on' : '') + '" data-way="i2i">图生图</button>' +
-        '<button class="way' + (p.way === 'ref' ? ' on' : '') + '" data-way="ref">参考图生图</button>' +
-        '<button class="way' + (p.way === 'stylize' ? ' on' : '') + '" data-way="stylize">风格化转绘</button>' +
-      '</div>' +
+      chips + ways +
       (n.gen.images.length
         ? '<div class="nThumb" style="display:flex;gap:5px;flex-wrap:wrap">' + n.gen.images.slice(0,6).map(u =>
             '<img src="' + u + '" style="width:44px;height:44px;object-fit:cover;border-radius:6px;border:1px solid var(--line);cursor:pointer" data-act="imgSrc" data-url="' + u + '">').join('') + '</div>'
@@ -1075,6 +1076,7 @@ function toolbarControls(n){
       '<button class="ctl ' + (p.audio ? 'arm' : '') + '" data-ctl="audio" title="智能配音"><span class="cdot"></span>配音</button>' +
       '<button class="ctl' + (n.gen.resultUrl ? '' : ' dis') + '" data-ctl="download" title="下载成片">⤓</button>';
   }
+  if (n.type !== 'image') return '';      // 文本块 / 模版块没有可调参数，不要在它们头上挂工具条
   const p = n.imgParams;
   const im = S.cfg.imageModels.find(m => m.id === p.model) || { name:p.model };
   return '<button class="ctl" data-ctl="imodel">' + esc(im.name) + '<span class="caret">▼</span></button>' +
@@ -1428,6 +1430,7 @@ function initCanvas(){
     const n = nodeById(e.target.closest('.node').dataset.id);
     const act = a.dataset.act;
     if (act === 'upVid') fillSlot(n, 'video');
+    else if (act === 'upImg') fillSlot(n, 'image');
     else if (act === 'i2v') enableImageToVideo(n);
     else if (act === 'previewVid'){ window.open(a.getAttribute('src'), '_blank'); }
     else if (act === 'lightbox'){ openLightbox(a.dataset.url, n && (n.img ? n.img.name : '')); }
@@ -2074,7 +2077,7 @@ function boot(){
     imgWay, canGenerate, costText, upsOf, edgeOf, upstreamImages, upstreamMedia,
     addEdge, render, softSync, delNode, delEdge, copyNode, duplicateNode,
     uploadFiles, fillSlot, mediaHTML, bringToFront,
-    loadWfText, wfText, saveWf, setCurrentFile, FSA_OK, renderTop,
+    loadWfText, wfText, saveWf, setCurrentFile, FSA_OK, renderTop, renderHud,
     cost: () => ({ video: videoCost(S.nodes.find(n => n.type === 'video') || { params:{ resolution:'720P', duration:5 } }) }),
   };
 }

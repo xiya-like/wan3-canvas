@@ -339,7 +339,7 @@ PROBE = r"""
       var targets = [
         ['文本块输入框', function(){ return document.querySelector('.node[data-id="'+mt2.id+'"] textarea'); }],
         ['图片块输入框', function(){ return document.querySelector('.node[data-id="'+ib.id+'"] textarea'); }],
-        ['图片块方式芯片', function(){ return document.querySelector('.node[data-id="'+ib.id+'"] .way'); }],
+        ['图片块上传按钮', function(){ return document.querySelector('.node[data-id="'+ib.id+'"] [data-act="upImg"]'); }],
         ['图片块生成按钮', function(){ return document.querySelector('.node[data-id="'+ib.id+'"] .genBtn'); }],
         ['视频块图生视频按钮', function(){ return document.querySelector('.node[data-id="'+soloV.id+'"] [data-act="i2v"]'); }],
         ['视频块帧位连接点', function(){ return document.querySelector('.node[data-id="'+mv2.id+'"] .fdot'); }],
@@ -385,15 +385,30 @@ PROBE = r"""
     W.render();
     ok('图片块费用随尺寸变化', W.costText(ix) === '¥0.60', W.costText(ix));
 
-    /* ---- 20. 图片块四种生图方式 ---- */
+    /* ---- 20. 图片块只保留「上传 / 参考图生图 / 风格化转绘」三个入口 ----
+       自动（反映不出实际状态）、文生图（直接打字就行）、图生图（与参考图生图同义）都已删。 */
     var iw = W.S.nodes.filter(function(n){ return n.type==='image' && !n.img; })[0];
-    var ways = Array.prototype.map.call(nodeEl(iw.id).querySelectorAll('.way'), function(b){ return b.dataset.way; }).join(',');
-    ok('图片块提供四种生图方式加自动', ways === 'auto,t2i,i2i,ref,stylize', ways);
-    ok('默认按上游自动推导', W.S.nodes.filter(function(n){return n.id===iw.id;})[0].imgParams.way === 'auto');
+    // 这批断言要用孤立图片块；有连线时按钮按原站规则全部收起（见第 26 节）
+    W.S.edges = W.S.edges.filter(function(e){ return e.from !== iw.id && e.to !== iw.id; });
+    W.render();
+    var ways = Array.prototype.map.call(nodeEl(iw.id).querySelectorAll('[data-act="upImg"],[data-way]'), function(b){
+      return b.dataset.act || b.dataset.way;
+    }).join(',');
+    ok('图片块只留上传、参考图生图、风格化转绘三个入口', ways === 'upImg,ref,stylize', ways);
+    ok('没有自动/文生图/图生图按钮',
+      !nodeEl(iw.id).querySelector('[data-way="auto"]') &&
+      !nodeEl(iw.id).querySelector('[data-way="t2i"]') &&
+      !nodeEl(iw.id).querySelector('[data-way="i2i"]'));
+    ok('默认仍按上游自动推导（默认值没变，只是不再显示该按钮）',
+      W.S.nodes.filter(function(n){return n.id===iw.id;})[0].imgParams.way === 'auto');
     click(nodeEl(iw.id).querySelector('[data-way="stylize"]'));
     ok('风格化转绘可被选中', W.S.nodes.filter(function(n){return n.id===iw.id;})[0].imgParams.way === 'stylize');
-    click(nodeEl(iw.id).querySelector('[data-way="auto"]'));
-    ok('可退回自动推导', W.S.nodes.filter(function(n){return n.id===iw.id;})[0].imgParams.way === 'auto');
+    ok('选中后按钮点亮', nodeEl(iw.id).querySelector('[data-way="stylize"]').classList.contains('on'));
+    click(nodeEl(iw.id).querySelector('[data-way="ref"]'));
+    ok('可切到参考图生图', W.S.nodes.filter(function(n){return n.id===iw.id;})[0].imgParams.way === 'ref');
+    ok('切到参考图生图后按钮点亮', nodeEl(iw.id).querySelector('[data-way="ref"]').classList.contains('on'));
+    // 下面几条验的是「默认按上游自动推导」，先把 way 拨回 auto
+    W.S.nodes.filter(function(n){return n.id===iw.id;})[0].imgParams.way = 'auto';
     ok('无上游时判定为文生图', W.imgWay(iw) === 't2i', W.imgWay(iw));
     var up1 = W.addNode('image', 20, 500); up1.img = {name:'p1.png', url:'/uploads/p1.png', box:'/uploads/p1.png'};
     W.render();
@@ -606,6 +621,74 @@ PROBE = r"""
       vs.vid = { name:'v.mp4', url:'/uploads/v.mp4', box:'/uploads/v.mp4' };
       W.render();
       ok('视频源块没有这两个按钮', cnt(vs.id) === 0, 'n=' + cnt(vs.id));
+    })();
+
+    /* ---- 26. 图片块连上线后入口全收起；文本块不挂工具条 ---- */
+    (function(){
+      var btns = function(id){
+        var e = nodeEl(id);
+        return e ? e.querySelectorAll('[data-act="upImg"],[data-way]').length : -1;
+      };
+      W.S.nodes.length = 0; W.S.edges.length = 0; W.S.sel = null; W.S.hover = null; W.selEdge = null;
+
+      // a) 孤立图片块：三个入口都在
+      var i = W.addNode('image', 0, 0);
+      W.render();
+      ok('孤立图片块有三个入口', btns(i.id) === 3, 'n=' + btns(i.id));
+
+      // b) 图片 -> 视频（它是源，原站照样收起）
+      var v = W.addNode('video', 500, 0);
+      W.addEdge(i.id, v.id, 'in');
+      W.render();
+      ok('图片连到视频后入口全部消失', btns(i.id) === 0, 'n=' + btns(i.id));
+      ok('此时图片块仍是生成器', W.role(i) === 'imageGen', W.role(i));
+
+      // c) 文本 -> 图片
+      W.S.edges.length = 0;
+      var t = W.addNode('text', -500, 300);
+      t.text = '上游文本';
+      W.addEdge(t.id, i.id, 'in');
+      W.render();
+      ok('文本连到图片后入口全部消失', btns(i.id) === 0, 'n=' + btns(i.id));
+
+      // d) 图片 -> 图片
+      W.S.edges.length = 0;
+      var j = W.addNode('image', 500, 600);
+      W.addEdge(i.id, j.id, 'in');
+      W.render();
+      ok('图片连到图片后两端入口都消失', btns(i.id) === 0 && btns(j.id) === 0,
+         'src=' + btns(i.id) + ' dst=' + btns(j.id));
+
+      // e) 断线即恢复
+      W.S.edges.length = 0;
+      W.render();
+      ok('断开后入口重新出现', btns(i.id) === 3, 'n=' + btns(i.id));
+
+      // f) 素材源块本来就没有这些入口
+      var isrc = W.addNode('image', 0, 900);
+      isrc.img = { name:'a.png', url:'/uploads/a.png', box:'/uploads/a.png' };
+      W.render();
+      ok('图片源块没有这三个入口', btns(isrc.id) === 0, 'n=' + btns(isrc.id));
+    })();
+
+    /* ---- 27. 文本块与模版块不挂悬浮工具条 ---- */
+    (function(){
+      var bare = function(id){
+        W.S.hover = id; W.S.sel = null;
+        W.renderHud();
+        return document.querySelectorAll('#hud .bar .ctl').length;
+      };
+      W.S.nodes.length = 0; W.S.edges.length = 0; W.S.sel = null; W.S.hover = null;
+      var t = W.addNode('text', 0, 0);
+      var img = W.addNode('image', 400, 0);
+      var v = W.addNode('video', 800, 0);
+      var tp = W.addNode('template', 0, 400);
+      W.render();
+      ok('文本块悬浮时不出现工具条', bare(t.id) === 0, 'ctl=' + bare(t.id));
+      ok('模版块悬浮时不出现工具条', bare(tp.id) === 0, 'ctl=' + bare(tp.id));
+      ok('图片块悬浮时仍有两个工具条控件', bare(img.id) === 5, 'ctl=' + bare(img.id));
+      ok('视频块悬浮时仍有七个工具条控件', bare(v.id) === 7, 'ctl=' + bare(v.id));
+      W.S.hover = null; W.renderHud();
     })();
 
   } catch (err){
