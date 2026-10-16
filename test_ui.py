@@ -608,13 +608,14 @@ PROBE = r"""
       W.render();
       ok('断开后两个按钮重新出现', cnt(v.id) === 2, 'n=' + cnt(v.id));
 
-      // f) 只有出边（它是源）不算汇，按钮应当保留
+      // f) 只有出边也算连上了 —— 原站实测：视频块往下游接出去时按钮照样收起
       W.S.edges.length = 0;
       var v2 = W.addNode('video', 0, 300);
       var down = W.addNode('image', 400, 300);
       W.addEdge(v2.id, down.id, 'in');
       W.render();
-      ok('只有出边时两个按钮保留（它仍是源）', cnt(v2.id) === 2, 'n=' + cnt(v2.id));
+      ok('只有出边时两个按钮也消失', cnt(v2.id) === 0, 'n=' + cnt(v2.id));
+      ok('此时它仍被判为生成器（只是不再显示入口）', W.role(v2) === 'videoGen', W.role(v2));
 
       // g) 素材源块本来就没有这两个按钮
       var vs = W.addNode('video', 0, 600);

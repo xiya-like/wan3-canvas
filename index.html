@@ -299,6 +299,11 @@ const ROLE_LABEL = { text:'文本源', imageSrc:'参考图源', imageGen:'图像
 function upsOf(id, port){
   return S.edges.filter(e => e.to === id && (port === undefined || e.toPort === port)).map(e => nodeById(e.from)).filter(Boolean);
 }
+/**
+ * 原站规则：块只要和任何节点连上（无论这条边是进还是出），块内的入口按钮就全部收起。
+ * 图片块与视频块同规则——往下游送料时它虽然是源，原站照样不显示入口。
+ */
+const hasAnyEdge = id => S.edges.some(e => e.from === id || e.to === id);
 function edgeOf(id, port){
   return S.edges.find(e => e.to === id && e.toPort === port);
 }
@@ -720,9 +725,8 @@ function bodyHTML(n){
           '<span class="chip img">@图片' + (i+1) + '</span>').join('') + '</div>'
       : '';
     const maxRefs = (S.cfg.imageModels.find(m => m.id === p.model) || {}).maxRefs || 3;
-    // 原站规则：图片块只要和任何节点连上（无论进还是出），这几个入口就全部收起。
-    // 与视频块的判定不同 —— 图片块往视频块送料时它是源，但原站照样不显示这些按钮。
-    const linked = S.edges.some(e => e.from === n.id || e.to === n.id);
+    // 原站规则：图片块只要和任何节点连上（无论进还是出），这几个入口就全部收起。与视频块同规则。
+    const linked = hasAnyEdge(n.id);
     // 只留「上传 / 参考图生图 / 风格化转绘」。
     // 自动：本来就反映不出实际状态；文生图：直接在输入框打字即可；
     // 图生图：与参考图生图是同一件事，不该并列出现。
@@ -757,10 +761,9 @@ function bodyHTML(n){
     : '';
   const frames = (p.mode === 'fl' || n.showFrames) ? framesHTML(n) : '';
   const ph = mt.on ? '' : (rm.mode === 'omni' ? '使用参考内容，例如：@图片1 @视频1 @音频1' : '描述你想要生成的视频内容');
-  // 原站规则：一旦有节点连进来，这个视频块就处在「源 → 汇」的汇这一端，
-  // 上传与图生视频两个入口就该收起来——反正素材已经从上游来了。
-  // 只有完全孤立、自己是起点的视频块才提供这两个按钮。
-  const isSink = upsOf(n.id).length > 0;
+  // 原站规则：一旦和任何节点连上（进或出都算），这个视频块就不再是起点，
+  // 上传与图生视频两个入口就该收起来。规则与图片块一致，见 hasAnyEdge。
+  const isSink = hasAnyEdge(n.id);
 
   return '<textarea class="prompt' + (mt.on ? ' mirror' : '') + '" data-bind="prompt"' +
       (mt.on ? ' readonly' : '') + ' placeholder="' + ph + '">' + esc(mt.on ? mt.text : n.prompt) + '</textarea>' +
