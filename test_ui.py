@@ -332,13 +332,16 @@ PROBE = r"""
        表现就是「点了没反应」。这里逐个点过去，断言元素始终存活。 */
     (function(){
       var ib = W.addNode('image', 700, 700);
+      // 视频块一旦有节点连入就是「汇」，上传/图生视频两个按钮会收起来（见第 25 节）。
+      // 要测这两个按钮还在不在，得拿一个孤立的视频块。
+      var soloV = W.addNode('video', 700, 1000);
       W.render();
       var targets = [
         ['文本块输入框', function(){ return document.querySelector('.node[data-id="'+mt2.id+'"] textarea'); }],
         ['图片块输入框', function(){ return document.querySelector('.node[data-id="'+ib.id+'"] textarea'); }],
         ['图片块方式芯片', function(){ return document.querySelector('.node[data-id="'+ib.id+'"] .way'); }],
         ['图片块生成按钮', function(){ return document.querySelector('.node[data-id="'+ib.id+'"] .genBtn'); }],
-        ['视频块图生视频按钮', function(){ return document.querySelector('.node[data-id="'+mv2.id+'"] [data-act="i2v"]'); }],
+        ['视频块图生视频按钮', function(){ return document.querySelector('.node[data-id="'+soloV.id+'"] [data-act="i2v"]'); }],
         ['视频块帧位连接点', function(){ return document.querySelector('.node[data-id="'+mv2.id+'"] .fdot'); }],
         ['帧位槽本体', function(){ return document.querySelector('.node[data-id="'+mv2.id+'"] .fslot'); }],
       ];
@@ -544,6 +547,65 @@ PROBE = r"""
       ]}), null, '');
       W.S.nodes[0].params.duration = 99;
       ok('两个视频块的参数对象不共用', W.S.nodes[1].params.duration !== 99, W.S.nodes[1].params.duration);
+    })();
+
+    /* ---- 25. 源—汇：视频块一旦被连接，就不再是起点，两个按钮收起 ----
+       原站行为：孤立视频块显示「视频上传 / 图生视频」；只要有任何节点连进它，
+       它就处在「源 → 汇」的汇这一端，两个入口收起来。 */
+    (function(){
+      var cnt = function(id){
+        var e = nodeEl(id);
+        return e ? e.querySelectorAll('[data-act="upVid"],[data-act="i2v"]').length : -1;
+      };
+      W.S.nodes.length = 0; W.S.edges.length = 0; W.S.sel = null; W.S.selEdge = null;
+
+      // a) 孤立
+      var v = W.addNode('video', 0, 0);
+      W.render();
+      ok('孤立视频块有两个按钮', cnt(v.id) === 2, 'n=' + cnt(v.id));
+
+      // b) 文本连入（镜像态）
+      var t = W.addNode('text', -400, 0);
+      t.text = '上游文本';
+      W.addEdge(t.id, v.id, 'in');
+      W.render();
+      ok('文本连入后两个按钮消失', cnt(v.id) === 0, 'n=' + cnt(v.id));
+
+      // c) 换成图片连入（非镜像态）—— 这条以前是漏的
+      W.S.edges.length = 0;
+      var i = W.addNode('image', -400, 300);
+      i.img = { name:'x.png', url:'/uploads/x.png', box:'/uploads/x.png' };
+      W.addEdge(i.id, v.id, 'in');
+      W.render();
+      ok('图片连入后两个按钮也消失', cnt(v.id) === 0, 'n=' + cnt(v.id));
+      ok('图片连入时输入框仍可编辑', nodeEl(v.id).querySelector('textarea').readOnly === false);
+
+      // d) 连到首帧位同样收起
+      W.S.edges.length = 0;
+      var i2 = W.addNode('image', -400, 600);
+      i2.img = { name:'y.png', url:'/uploads/y.png', box:'/uploads/y.png' };
+      W.addEdge(i2.id, v.id, 'first');
+      W.render();
+      ok('连到首帧位后两个按钮也消失', cnt(v.id) === 0, 'n=' + cnt(v.id));
+
+      // e) 断掉连接，两个按钮回来
+      W.S.edges.length = 0;
+      W.render();
+      ok('断开后两个按钮重新出现', cnt(v.id) === 2, 'n=' + cnt(v.id));
+
+      // f) 只有出边（它是源）不算汇，按钮应当保留
+      W.S.edges.length = 0;
+      var v2 = W.addNode('video', 0, 300);
+      var down = W.addNode('image', 400, 300);
+      W.addEdge(v2.id, down.id, 'in');
+      W.render();
+      ok('只有出边时两个按钮保留（它仍是源）', cnt(v2.id) === 2, 'n=' + cnt(v2.id));
+
+      // g) 素材源块本来就没有这两个按钮
+      var vs = W.addNode('video', 0, 600);
+      vs.vid = { name:'v.mp4', url:'/uploads/v.mp4', box:'/uploads/v.mp4' };
+      W.render();
+      ok('视频源块没有这两个按钮', cnt(vs.id) === 0, 'n=' + cnt(vs.id));
     })();
 
   } catch (err){
