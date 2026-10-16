@@ -22,6 +22,9 @@ _shot.png
 _zshot.png
 _tmp_*
 
+# 我自己的一次性脚本，别入库
+_*.ps1
+
 *.log
 Thumbs.db
 .DS_Store
