@@ -57,6 +57,8 @@ PROBE = r"""
           ok('大图高度有上限不会顶爆块', full.getBoundingClientRect().height <= 400, Math.round(full.getBoundingClientRect().height));
         }
         // 悬停素材源块应浮出「替换 / 下载」
+        // 先取消选中：选中块的胶囊是钉住的，会与悬停这条并存
+        W.S.sel = null;
         var head = document.querySelector('.node[data-id="'+n.id+'"] .nHead');
         head.dispatchEvent(new MouseEvent('mousemove',{bubbles:true,clientX:0,clientY:0}));
         var ctl = Array.prototype.map.call(document.querySelectorAll('#hud .bar .ctl'), function(b){ return b.dataset.ctl; }).join(',');

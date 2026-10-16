@@ -980,23 +980,34 @@ function closePop(){ S.pop = null; renderHud(); }
 function renderHud(){
   const hud = $('#hud');
   hud.innerHTML = '';
-  const n = nodeById(S.hover || S.sel);
-  const ctrls = n ? toolbarControls(n) : [];
-  if (!ctrls.length && !S.pop) return;
 
-  // 工具条锚在块上方；顶到画布上沿就翻到块下方
-  let bar = null;
-  if (ctrls.length){
-    bar = document.createElement('div');
+  /**
+   * 原站行为：选中的块，它的胶囊**钉在页面上**，指针移开也不消失；
+   * 指针悬停到别的块时，那个块的胶囊会额外冒出来。两者可以同时存在。
+   * 只有点画布空白取消选中，钉住的那条才会消失。
+   * 所以不能写成 `S.hover || S.sel` —— 那样悬停会把选中块的胶囊顶掉。
+   */
+  const targets = [];
+  const sn = nodeById(S.sel);
+  if (sn) targets.push(sn);
+  const hn = nodeById(S.hover);
+  if (hn && hn.id !== S.sel) targets.push(hn);
+
+  const bars = {};
+  targets.forEach(n => {
+    const ctrls = toolbarControls(n);
+    if (!ctrls.length) return;                 // 文本块 / 模版块没有工具条
+    const bar = document.createElement('div');
     bar.className = 'bar';
     bar.innerHTML = '<div class="grip" title="拖动工具条"></div>' + ctrls;
     hud.appendChild(bar);
+    // 工具条锚在块上方；顶到画布上沿就翻到块下方
     const off = n.barOff || { dx:0, dy:0 };
     const box = wrapBox();
     const nw = (n._h || 120) * S.view.k;
     let left = toScreen(n).x + off.dx;
     let top = toScreen(n).y + off.dy - 44;
-    if (top < 6) top = toScreen(n).y + nw + 10 + off.dy;      // 上方放不下就放下方
+    if (top < 6) top = toScreen(n).y + nw + 10 + off.dy;
     const bw = bar.offsetWidth;
     if (left + bw > box.w - 6) left = Math.max(6, box.w - bw - 6);
     if (left < 6) left = 6;
@@ -1024,12 +1035,14 @@ function renderHud(){
       S.drag = { type:'bar', id:n.id, sx:ev.clientX, sy:ev.clientY };
       ev.preventDefault();
     };
-  }
+    bars[n.id] = bar;
+  });
 
   // 弹出层
   if (S.pop && S.pop.node){
     const pn = nodeById(S.pop.node);
     if (!pn || !isGen(pn)){ S.pop = null; return; }
+    const bar = bars[S.pop.node] || null;
     const pop = document.createElement('div');
     pop.className = 'pop';
     pop.innerHTML = popHTML(pn, S.pop.ctl);

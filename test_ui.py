@@ -162,6 +162,8 @@ PROBE = r"""
     W.render();
 
     /* ---- 9. 悬浮工具条 ---- */
+    // 先取消选中：选中块的胶囊是钉住的，会与悬停这条并存（见第 28 节）
+    W.S.sel = null;
     mouse(nodeEl(vid.id).querySelector('.nHead'), 'mousemove', 200, 200);
     ok('悬停视频块浮出工具条', all('#hud .bar .ctl').length === 7, 'ctl=' + all('#hud .bar .ctl').length);
     var ctls = all('#hud .bar .ctl').map(function(b){ return b.dataset.ctl; }).join(',');
@@ -690,6 +692,61 @@ PROBE = r"""
       ok('图片块悬浮时仍有两个工具条控件', bare(img.id) === 5, 'ctl=' + bare(img.id));
       ok('视频块悬浮时仍有七个工具条控件', bare(v.id) === 7, 'ctl=' + bare(v.id));
       W.S.hover = null; W.renderHud();
+    })();
+
+    /* ---- 28. 胶囊钉住：选中后不随指针移开而消失，悬停别的块可叠加出现 ---- */
+    (function(){
+      var bars = function(){ return all('#hud .bar'); };
+      // 工具条锚在所属块的正上方，按横坐标反查它属于哪个块
+      var screenX = function(n){ return W.S.view.x + n.x * W.S.view.k; };
+      var ownerOf = function(bar){
+        var bx = parseFloat(bar.style.left), best = null, bd = 1e9;
+        W.S.nodes.forEach(function(n){
+          var d = Math.abs(screenX(n) - bx);
+          if (d < bd){ bd = d; best = n; }
+        });
+        return best;
+      };
+
+      W.S.nodes.length = 0; W.S.edges.length = 0; W.S.sel = null; W.S.hover = null; W.S.pop = null;
+      var v = W.addNode('video', 60, 300);
+      var i = W.addNode('image', 700, 60);
+      W.render();
+
+      // a) 只选中：一条胶囊
+      W.S.sel = v.id; W.S.hover = null; W.renderHud();
+      ok('选中后出现一条胶囊', bars().length === 1, 'bars=' + bars().length);
+      ok('这条胶囊属于选中的视频块', ownerOf(bars()[0]) === v, (ownerOf(bars()[0]) || {}).id + ' vs ' + v.id);
+
+      // b) 指针移开（悬停清空）：钉住的那条还在
+      W.S.hover = null; W.renderHud();
+      ok('指针移开后选中块的胶囊仍在', bars().length === 1 && ownerOf(bars()[0]) === v, 'bars=' + bars().length);
+
+      // c) 悬停另一个块：两条同时存在
+      W.S.hover = i.id; W.renderHud();
+      ok('悬停别的块时两条胶囊同时出现', bars().length === 2, 'bars=' + bars().length);
+      var owners = bars().map(ownerOf).filter(Boolean).map(function(n){ return n.id; }).sort().join(',');
+      ok('两条分别属于选中的视频块与悬停的图片块',
+         owners === [i.id, v.id].sort().join(','), owners);
+
+      // d) 指针移到画布空白：只剩钉住的那条
+      W.S.hover = null; W.renderHud();
+      ok('指针移回画布后只剩选中那条', bars().length === 1 && ownerOf(bars()[0]) === v, 'bars=' + bars().length);
+
+      // e) 点空白取消选中：胶囊才消失
+      W.S.sel = null; W.S.hover = null; W.renderHud();
+      ok('取消选中后胶囊才消失', bars().length === 0, 'bars=' + bars().length);
+
+      // f) 悬停同一个块不会重复出两条
+      W.S.sel = v.id; W.S.hover = v.id; W.renderHud();
+      ok('悬停的就是选中的块时不重复渲染', bars().length === 1, 'bars=' + bars().length);
+
+      // g) 悬停文本块不会凭空多一条（文本块本来就没有工具条）
+      var t = W.addNode('text', 700, 500);
+      W.render();
+      W.S.sel = v.id; W.S.hover = t.id; W.renderHud();
+      ok('悬停文本块不会多出胶囊', bars().length === 1, 'bars=' + bars().length);
+      W.S.sel = null; W.S.hover = null; W.renderHud();
     })();
 
   } catch (err){
