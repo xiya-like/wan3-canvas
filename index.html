@@ -116,10 +116,17 @@ button{cursor:pointer;background:none;border:none}
 .nHead{display:flex;align-items:center;gap:7px;padding:9px 10px;border-bottom:1px solid var(--line);background:#26262a;border-radius:11px 11px 0 0;cursor:grab}
 .nHead:active{cursor:grabbing}
 .nHead .ico{width:19px;height:19px;border-radius:5px;display:grid;place-items:center;font-size:11px;background:#333338;flex:none}
-.nHead b{font-size:12.5px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.nRole{font-size:9.5px;padding:1px 5px;border-radius:10px;border:1px solid var(--line);color:var(--tx3);flex:none;white-space:nowrap}
+/* 名称不占满整行（原来 flex:1 会把标题栏的空白也吃进来，悬停时是一条很宽的灰条，
+   一眼看不出哪里能双击）。改成按内容收紧，靠 .nRole 的 margin-left:auto 把角色标签顶到右边，
+   排版效果一样，但名称的命中区由 padding 决定，边界清晰。
+   flex:0 1 auto + min-width:0 是为了名字过长时仍然省略号截断而不是把角色标签挤走。 */
+.nHead b{font-size:12.5px;flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nRole{font-size:9.5px;padding:1px 5px;border-radius:10px;border:1px solid var(--line);color:var(--tx3);flex:none;white-space:nowrap;margin-left:auto}
 .nRole.src{border-color:#1d4429;color:var(--ok)}
 .nRole.gen{border-color:#4a3a12;color:var(--warn)}
+/* 块名：可双击重命名。命中区用 padding 撑大、负 margin 抵消掉，排版不受影响。 */
+.nName{padding:5px 12px;margin:-5px -12px;border-radius:6px;cursor:text}
+.nName:hover{background:#ffffff14}
 /* 重命名态：原站双击块名后名称会整块变蓝（见原站截图 2026-10-16 221625），
    所以这里用蓝调底色 + 蓝色文字，而不是普通的深色输入框。 */
 .nRename{width:100%;background:#2c3054;border:1px solid var(--ac);border-radius:5px;
@@ -280,6 +287,7 @@ const S = {
   logs: [], running: false, hasKey: null, backend: null, cfg: DEFAULT_CFG,
   proj: '未命名项目', history: [], clipboard: null,
   pop: null, ctx: null, renaming: null, dropOver: false,
+  dbl: null,                    // 上一次落在块名上的按下，用来手工判双击（见 initCanvas）
   fileHandle: null,        // 当前工作流文件的 FileSystemFileHandle，保存时原地覆盖
   fileName: '',            // 目标文件名，给用户看清楚会覆盖谁
   fileNodeCount: 0,        // 上次保存时有多少个块 —— 防止误把空画布覆盖上去
@@ -1264,7 +1272,7 @@ function openCtx(id, cx, cy){
   m.innerHTML =
     '<button class="ctxItem" data-cmd="copy">复制<span class="ck">Ctrl+C</span></button>' +
     '<button class="ctxItem" data-cmd="dup">创建副本</button>' +
-    '<button class="ctxItem" data-cmd="rename">重命名<span class="ck">F2</span></button>' +
+    '<button class="ctxItem" data-cmd="rename">重命名<span class="ck">R</span></button>' +
     '<div class="ctxSep"></div>' +
     '<button class="ctxItem danger" data-cmd="del">删除<span class="ck">Delete</span></button>';
   m.classList.add('show');
@@ -1363,6 +1371,31 @@ function initCanvas(){
       return;
     } else if (nodeEl && e.target.closest('[data-drag]')){
       const n = nodeById(nodeEl.dataset.id);
+      // 双击块名 = 重命名。
+      // 这里手工判双击而不是听浏览器的 dblclick 事件：mousedown 分支会 bringToFront()
+      // 把节点 appendChild 到 #world 末尾，元素一旦被移动，浏览器认为两次点击的目标不是
+      // 同一个，原生 dblclick 压根不派发 —— 表现就是「双击没反应」。手工判定不受此影响。
+      const nameEl = e.target.closest('.nName');
+      if (nameEl){
+        const now = performance.now(), d = S.dbl;
+        if (d && d.id === n.id && now - d.t < 450 &&
+            Math.abs(e.clientX - d.x) < 8 && Math.abs(e.clientY - d.y) < 8){
+          S.dbl = null;
+          e.preventDefault();
+          startRename(n.id);
+          return;
+        }
+        S.dbl = { id:n.id, t:now, x:e.clientX, y:e.clientY };
+        S.selEdge = null;
+        if (S.sel !== n.id){
+          S.sel = n.id;
+          document.querySelectorAll('.node.sel').forEach(x => x.classList.remove('sel'));
+          nodeEl.classList.add('sel');
+          renderHud();
+        }
+        e.preventDefault();
+        return;                 // 名称上不启动拖动，标题栏别处照样能拖块
+      }
       const w = toWorld(e.clientX, e.clientY);
       S.selEdge = null;
       bringToFront(n.id);         // 一按下去就置顶：拖动中的块不能被别的块盖住
@@ -1382,6 +1415,7 @@ function initCanvas(){
       softSelect(nodeEl);
       return;
     } else {
+      S.dbl = null;              // 点到空白就作废刚才那一次，否则久之后再点名称会误判成双击
       S.drag = { type:'pan', sx:e.clientX, sy:e.clientY, vx:S.view.x, vy:S.view.y };
       if (S.sel || S.selEdge || S.hover){
         S.sel = null; S.selEdge = null; S.hover = null;
@@ -1392,17 +1426,6 @@ function initCanvas(){
     }
     render();
     e.preventDefault();
-  });
-
-  // 双击块名进入重命名（原站行为，见截图 2026-10-16 221625）。
-  // 单独用 dblclick 而不是复用 mousedown：一次双击会带来两轮 mousedown，
-  // 那两轮已经在拖动分支里正常走完（mouseup 只调 renderHud/renderEdges，不重建节点），
-  // 所以这里的 <b> 一定还连在文档上，closest 能照常找到所属块。
-  wrap.addEventListener('dblclick', e => {
-    const nameEl = e.target.closest && e.target.closest('.nName');
-    if (!nameEl) return;                     // 只认名称本身，标题栏别处双击还是拖动块
-    e.preventDefault();
-    startRename(nameEl.dataset.node);
   });
 
   wrap.addEventListener('mousemove', e => {
@@ -2059,6 +2082,8 @@ function boot(){
     '<p><b>图生视频</b>：视频块里点「图生视频」，左边会自动冒出一个空图片块并接到<b>首帧</b>，尾帧可再连一张。运行时只连首帧会<b>自动降级</b>为首帧生视频。</p>' +
     '<p><b>调参数</b>：鼠标悬停或选中生成块，块上方会浮出工具条，模型/模式/时长/分辨率/比例/配音都在那儿。</p>' +
     '<p><b>右键块</b>：复制、创建副本、重命名、删除。</p>' +
+    '<p><b>改名</b>：<b>双击块名</b>，或按 <code>R</code>，或右键「重命名」。回车保存、Esc 放弃。' +
+      '刻意没用 <code>F2</code>——那排功能键基本都被系统和软件抢走，按不到。</p>' +
     '<p><b>删连线</b>：点选后按 <code>Delete</code>、点连线中点的 ✕，或点画布空白处取消。</p>' +
     '<p><b>导入 / 保存 / 导出</b>：左栏 <code>↥</code> 导入已有 JSON，导入后点顶栏「保存」会<b>原地覆盖那个文件</b>（按钮悬停会显示要覆盖的文件名）；「导出」则永远是另存一份到下载目录。' +
       (FSA_OK ? '' : '<span style="color:var(--warn)">当前浏览器不支持原地覆盖，保存会退回下载。</span>') + '</p>' +
@@ -2139,7 +2164,11 @@ function boot(){
       else if (S.sel){ delNode(S.sel); e.preventDefault(); }
       return;
     }
-    if (e.key === 'F2' && S.sel){ e.preventDefault(); startRename(S.sel); return; }
+    // 重命名用 R 而不是 F2：F2 那排功能键基本都被系统和软件抢占了（编辑器里 F2 常是重命名、
+    // 终端里是粘注、某些软件里被禁用），用户按不到。裸字母键最稳，和 T/I/V/P/U 一组。
+    if (e.key.toLowerCase() === 'r' && !e.ctrlKey && !e.metaKey && !e.altKey && S.sel){
+      e.preventDefault(); startRename(S.sel); return;
+    }
     const k = e.key.toLowerCase();
     if (PALETTE.some(p => p.key.toLowerCase() === k)){
       e.preventDefault();

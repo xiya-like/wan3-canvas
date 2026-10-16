@@ -907,74 +907,105 @@ PROBE = r"""
     })();
 
     /* ---- 32. 双击块名进入重命名（原站行为，见截图 2026-10-16 221625 / 221653） ----
-       原来只有 F2 和右键菜单能改名，双击名称没反应。 */
+       原来只有 F2 和右键菜单能改名，双击名称没反应。
+       双击是 mousedown 里手工判的，不依赖原生 dblclick 事件。 */
     (function(){
-      function dbl(target){
-        mouse(target, 'mousedown'); mouse(target, 'mouseup'); mouse(target, 'click');
-        mouse(target, 'mousedown'); mouse(target, 'mouseup'); mouse(target, 'click');
-        target.dispatchEvent(new MouseEvent('dblclick', {bubbles:true, cancelable:true, view:window}));
+      function twoClicks(target, x, y){
+        // 完整走两轮 mousedown → mouseup → click，和真实双击一致
+        mouse(target, 'mousedown', x, y); mouse(target, 'mouseup', x, y); mouse(target, 'click', x, y);
+        mouse(target, 'mousedown', x, y); mouse(target, 'mouseup', x, y); mouse(target, 'click', x, y);
       }
-      W.S.nodes.length = 0; W.S.edges.length = 0; W.S.sel = null; W.S.renaming = null;
+      function nameOf(id){ return nodeEl(id).querySelector('.nName'); }
+      function inputOf(id){ return nodeEl(id).querySelector('.nRename'); }
+      W.S.nodes.length = 0; W.S.edges.length = 0; W.S.sel = null; W.S.renaming = null; W.S.dbl = null;
       var v = W.addNode('video', 120, 120);
       W.render();
 
-      var nameEl = nodeEl(v.id).querySelector('.nName');
-      ok('块名渲染成可识别的 .nName', !!nameEl);
+      ok('块名渲染成可识别的 .nName', !!nameOf(v.id));
 
-      // 光标双击那一瞬间 <b> 必须还在文档里，否则后面全白测
-      mouse(nameEl, 'mousedown'); mouse(nameEl, 'mouseup');
-      ok('双击过程中块名没有被重建掉', nameEl.isConnected);
-      mouse(nameEl, 'click');
+      // 命中区要比文字本身大：小字也好点（用 padding 撑的）
+      var nEl = nameOf(v.id), nb = nEl.getBoundingClientRect();
+      ok('块名命中区大于文字本身', nb.width > 40 && nb.height > 20,
+         Math.round(nb.width) + 'x' + Math.round(nb.height));
 
-      dbl(nameEl);
-      var inp = nodeEl(v.id).querySelector('.nRename');
+      // 光标按下那一瞬间 <b> 必须还在文档里
+      mouse(nEl, 'mousedown');
+      ok('按下时块名没有被重建掉', nEl.isConnected);
+      mouse(nEl, 'mouseup');
+      ok('单击一次不进入重命名', !inputOf(v.id));
+
+      twoClicks(nameOf(v.id), nb.left + nb.width/2, nb.top + nb.height/2);
+      var inp = inputOf(v.id);
       ok('双击块名进入重命名态', !!inp);
       ok('重命名输入框自动获得焦点', document.activeElement === inp,
          'active=' + (document.activeElement ? document.activeElement.className : 'null'));
-      ok('重命名态下原名不再是 <b>', !nodeEl(v.id).querySelector('.nName'));
+      ok('重命名态下原名不再是 <b>', !nameOf(v.id));
 
       // 输入并回车
       inp.value = '我的短片';
       inp.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true}));
       ok('回车后名称写进状态', W.S.nodes.filter(function(n){ return n.id === v.id; })[0].name === '我的短片',
          JSON.stringify(W.S.nodes.filter(function(n){ return n.id === v.id; })[0].name));
-      ok('回车后退出重命名态', !nodeEl(v.id).querySelector('.nRename'));
-      ok('回车后显示新名称',
-         nodeEl(v.id).querySelector('.nName').textContent === '我的短片',
-         nodeEl(v.id).querySelector('.nName').textContent);
+      ok('回车后退出重命名态', !inputOf(v.id));
+      ok('回车后显示新名称', nameOf(v.id).textContent === '我的短片', nameOf(v.id).textContent);
 
       // Esc 取消：名字不该被改
-      dbl(nodeEl(v.id).querySelector('.nName'));
-      var inp2 = nodeEl(v.id).querySelector('.nRename');
+      twoClicks(nameOf(v.id), 0, 0);
+      var inp2 = inputOf(v.id);
       ok('再次双击可重命名', !!inp2);
       inp2.value = '不该保存';
       inp2.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}));
       ok('Esc 放弃修改', W.S.nodes.filter(function(n){ return n.id === v.id; })[0].name === '我的短片',
          JSON.stringify(W.S.nodes.filter(function(n){ return n.id === v.id; })[0].name));
 
+      // 两次单击间隔太久不算双击（这里时间戳必然远超阈值，只验证缓冲会被清掉）
+      W.S.dbl = { id:v.id, t:performance.now() - 5000, x:0, y:0 };
+      mouse(nameOf(v.id), 'mousedown'); mouse(nameOf(v.id), 'mouseup');
+      ok('间隔过久不算双击', !inputOf(v.id));
+      // 点画布空白要作废上一次的缓冲
+      W.S.dbl = { id:v.id, t:performance.now(), x:0, y:0 };
+      mouse(el('#canvasWrap'), 'mousedown'); mouse(el('#canvasWrap'), 'mouseup');
+      ok('点空白后双击缓冲被清掉', W.S.dbl === null, 'dbl=' + JSON.stringify(W.S.dbl));
+
       // 「任何一个块」都要能改名
       ['text','image','video'].forEach(function(tp){
         var n = W.addNode(tp, 400, 300);
         W.render();
-        dbl(nodeEl(n.id).querySelector('.nName'));
-        ok(tp + '块双击名称也能进入重命名', !!nodeEl(n.id).querySelector('.nRename'));
+        var nb2 = nameOf(n.id).getBoundingClientRect();
+        twoClicks(nameOf(n.id), nb2.left + nb2.width/2, nb2.top + nb2.height/2);
+        ok(tp + '块双击名称也能进入重命名', !!inputOf(n.id));
         W.S.renaming = null; W.render();
       });
 
       // 标题栏别处双击仍然是拖动块，不该误触发重命名
-      W.S.renaming = null;
+      W.S.renaming = null; W.S.dbl = null;
       var img2 = W.addNode('image', 700, 300);
       W.render();
       var head = nodeEl(img2.id).querySelector('.nHead');
-      dbl(head);
-      ok('双击标题栏空白处不触发重命名', !nodeEl(img2.id).querySelector('.nRename'));
+      var hb = head.getBoundingClientRect();
+      twoClicks(head, hb.right - 6, hb.top + hb.height/2);   // 标题栏右侧空白（角色标签那边）
+      ok('双击标题栏空白处不触发重命名', !inputOf(img2.id));
 
-      // F2 这条老路不能被改坏
+      // 从名称上按下不该启动拖动
+      W.S.dbl = null;
+      mouse(nameOf(img2.id), 'mousedown');
+      ok('在块名上按下不会启动拖动', W.S.drag === null, 'drag=' + JSON.stringify(W.S.drag));
+      mouse(nameOf(img2.id), 'mouseup');
+
+      // R 键改名；F2 不再响应（功能键被系统/软件占用，按不到）
       W.S.sel = img2.id;
-      mouse(head, 'keydown');
-      document.dispatchEvent(new KeyboardEvent('keydown', {key:'F2', bubbles:true}));
-      ok('F2 仍然能进入重命名', !!nodeEl(img2.id).querySelector('.nRename'));
+      document.dispatchEvent(new KeyboardEvent('keydown', {key:'r', bubbles:true}));
+      ok('按 R 进入重命名', !!inputOf(img2.id));
       W.S.renaming = null; W.render();
+      W.S.sel = img2.id;
+      document.dispatchEvent(new KeyboardEvent('keydown', {key:'F2', bubbles:true}));
+      ok('按 F2 不再有反应', !inputOf(img2.id));
+
+      // Ctrl+R 是浏览器刷新，不能被我们截胡
+      W.S.sel = img2.id;
+      document.dispatchEvent(new KeyboardEvent('keydown', {key:'r', ctrlKey:true, bubbles:true}));
+      ok('Ctrl+R 不触发重命名', !inputOf(img2.id));
+      W.S.sel = null;
     })();
 
   } catch (err){

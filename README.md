@@ -14,8 +14,8 @@
 
 | 文档 | 内容 |
 |---|---|
-| [`CHANGELOG.md`](CHANGELOG.md) | 19 条变更记录（首版 + 十八次修订） |
-| [`docs/dev-notes.md`](docs/dev-notes.md) | 踩过的 27 个坑，改代码前先看 |
+| [`CHANGELOG.md`](CHANGELOG.md) | 20 条变更记录（首版 + 十九次修订） |
+| [`docs/dev-notes.md`](docs/dev-notes.md) | 踩过的 29 个坑，改代码前先看 |
 
 ---
 
@@ -197,14 +197,19 @@ placeholder 变成「使用参考内容，例如：@图片1 @视频1 @音频1」
 |---|---|---|
 | 复制 | 放进剪贴板 | <kbd>Ctrl</kbd>+<kbd>C</kbd> |
 | 创建副本 | 画布上生成独立新块（不共享连线） | — |
-| 重命名 | 原地编辑 | <kbd>F2</kbd>，或**双击块名** |
+| 重命名 | 原地编辑 | <kbd>R</kbd>，或**双击块名** |
 | 删除 | 连同连线一起删 | <kbd>Delete</kbd> |
 
 <kbd>Ctrl</kbd>+<kbd>V</kbd> 粘贴。删连线有三种方式：选中后按 <kbd>Delete</kbd>、点连线中点的 ✕、点空白取消选中。
 
 **双击块名即可重命名**（原站行为）：名称变成蓝底的输入框、光标自动落进去，
 <kbd>Enter</kbd> 保存、<kbd>Esc</kbd> 放弃、点别处也保存。
-只有名称本身响应双击，标题栏别处双击仍然是拖动块。
+悬停块名会亮出一圈浅色底，边界清楚——**只有名称本身响应双击，标题栏别处双击仍然是拖动块**。
+
+> 快捷键用 <kbd>R</kbd> 而不是 <kbd>F2</kbd>：F2 那排功能键基本都被系统和软件抢走了
+> （编辑器里是重命名、终端里是粘注、有些软件直接禁用），用户根本按不到。
+> 裸字母键和 <kbd>T</kbd>/<kbd>I</kbd>/<kbd>V</kbd>/<kbd>P</kbd>/<kbd>U</kbd> 一组，记起来也顺。
+> <kbd>Ctrl</kbd>+<kbd>R</kbd>（浏览器刷新）不会被截胡。
 
 ### 成片
 
@@ -264,7 +269,7 @@ placeholder 变成「使用参考内容，例如：@图片1 @视频1 @音频1」
 python test_backend.py   # 82 项：请求体结构 + 校验分支 + 启动清理（mock urlopen）
 python test_upload.py    # 20 项：真实上传 → URL 可达 → 图片解码 → 灯箱（只写本地）
 python test_media.py     #  9 项：重绘/拖动/点空白都不能打断播放中的媒体
-python test_ui.py        # 199 项：无头浏览器 DOM 断言（真实 MouseEvent）
+python test_ui.py        # 206 项：无头浏览器 DOM 断言（真实 MouseEvent）
 python test_server.py    # 19 项：真启动服务 + 启动清理 + 路由 + 静态白名单
 ```
 
@@ -276,7 +281,7 @@ python test_server.py    # 19 项：真启动服务 + 启动清理 + 路由 + �
 > `_shot.png`、`_zshot.png` 和五个 `test_*_out.txt`。
 
 结果分别写到 `test_backend_out.txt` / `test_upload_out.txt` / `test_media_out.txt` /
-`test_ui_out.txt` / `test_server_out.txt`。合计 **329 项断言**。
+`test_ui_out.txt` / `test_server_out.txt`。合计 **336 项断言**。
 
 - `test_backend.py` 拦截 `urllib.request.urlopen`，断言视频用 `input.media` 数组、
   图像用 OpenAI 兼容平铺结构、`n` 是整数、`size` 用字母 x、互斥规则、模式降级、素材分档上限；
@@ -341,7 +346,7 @@ wan3画布/
 ├── test_ui.py         无头浏览器 DOM 断言
 ├── test_server.py     服务集成测试
 ├── docs/
-│   └── dev-notes.md   开发笔记：踩过的 27 个坑
+│   └── dev-notes.md   开发笔记：踩过的 29 个坑
 ├── CHANGELOG.md       变更记录
 ├── LICENSE            MIT
 ├── .env.example       Key 模板
@@ -369,7 +374,7 @@ wan3画布/
 
 ## 开发笔记
 
-改代码前踩过的 **27 个坑**都在 [`docs/dev-notes.md`](docs/dev-notes.md)。
+改代码前踩过的 **29 个坑**都在 [`docs/dev-notes.md`](docs/dev-notes.md)。
 每一条都对应一个真实存在过的 bug，比如：
 
 - `render()` 会销毁重建所有节点，`<video>`/`<audio>` 也在内 —— 播放器被重置回 0:00 的元凶
@@ -404,7 +409,7 @@ wan3画布/
 
 ## 更新日志
 
-完整变更记录在 [`CHANGELOG.md`](CHANGELOG.md)，目前 **19 条**（首版 + 十八次修订），按时间倒序。
+完整变更记录在 [`CHANGELOG.md`](CHANGELOG.md)，目前 **20 条**（首版 + 十九次修订），按时间倒序。
 
 ---
 
