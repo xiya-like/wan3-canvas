@@ -813,6 +813,99 @@ PROBE = r"""
          'top=' + vEl.querySelector('.port.in').style.top);
     })();
 
+    /* ---- 30. 帧位连接点要落在块的边框上，与进出端口同一条竖轴 ----
+       原来 .fdot 是 .fslot 里的流内元素，靠 margin-left:-15px 顶出去，
+       实测落在块内侧 11px（portIn.x=0.0 而 fdot.x=11.0），和端口错开一截。 */
+    (function(){
+      W.S.nodes.length = 0; W.S.edges.length = 0; W.S.sel = null;
+      var v = W.addNode('video', 300, 120);
+      var img = W.addNode('image', 40, 460);
+      v.params.mode = 'fl'; v.showFrames = true;
+      W.render();
+
+      var vEl = nodeEl(v.id);
+      var vr = vEl.getBoundingClientRect();
+      var cxOf = function(d){ var r = d.getBoundingClientRect(); return r.left + r.width/2 - vr.left; };
+      var pin = vEl.querySelector('.port.in');
+      var f1 = vEl.querySelector('.fdot[data-port="first"]');
+      var f2 = vEl.querySelector('.fdot[data-port="last"]');
+
+      // a) 与进出端口同一条竖轴（用户明确要求）
+      ok('首帧连接点与入端口同轴', Math.abs(cxOf(f1) - cxOf(pin)) < 0.6,
+         'fdot=' + cxOf(f1).toFixed(1) + ' port=' + cxOf(pin).toFixed(1));
+      ok('尾帧连接点与入端口同轴', Math.abs(cxOf(f2) - cxOf(pin)) < 0.6,
+         'fdot=' + cxOf(f2).toFixed(1) + ' port=' + cxOf(pin).toFixed(1));
+
+      // b) 落在块的边框上，不是块内侧
+      ok('首帧连接点压在块边框上', Math.abs(cxOf(f1)) < 1.5, 'x=' + cxOf(f1).toFixed(1));
+      ok('尾帧连接点压在块边框上', Math.abs(cxOf(f2)) < 1.5, 'x=' + cxOf(f2).toFixed(1));
+
+      // c) 三个点在竖直方向仍然拉得开（别为了对齐 x 又叠到一起）
+      var cyOf = function(d){ var r = d.getBoundingClientRect(); return r.top + r.height/2; };
+      ok('首帧与尾帧连接点仍然错开', Math.abs(cyOf(f2) - cyOf(f1)) >= 20,
+         'd=' + Math.abs(cyOf(f2) - cyOf(f1)).toFixed(1));
+
+      // d) 连线终点要跟着圆点走 —— 锚点改成读真实坐标后不再有经验偏移
+      var e = W.addEdge(img.id, v.id, 'first');
+      W.render();
+      vEl = nodeEl(v.id);
+      var hit = el('#edges .edgeHit[data-edge="' + e.id + '"]');
+      ok('帧位连线仍然存在', !!hit);
+      if (hit){
+        var dTxt = hit.getAttribute('d');
+        var tail = dTxt.slice(dTxt.lastIndexOf(' ') + 1).split(',');
+        var ex = parseFloat(tail[0]), ey = parseFloat(tail[1]);
+        var vr2 = vEl.getBoundingClientRect();
+        var fd = vEl.querySelector('.fdot[data-port="first"]').getBoundingClientRect();
+        var wantX = fd.left + fd.width/2 - vr2.left + v.x;
+        var wantY = fd.top + fd.height/2 - vr2.top + v.y;
+        ok('帧位连线终点跟着圆点走', Math.abs(ex - wantX) < 2 && Math.abs(ey - wantY) < 2,
+           'edge=(' + ex.toFixed(1) + ',' + ey.toFixed(1) + ') dot=(' + wantX.toFixed(1) + ',' + wantY.toFixed(1) + ')');
+      }
+
+      // e) 帧位行里的文字没被圆点的绝对定位挤走
+      ok('帧位文字仍在行内', vEl.querySelectorAll('.fslot .ftxt').length === 2);
+    })();
+
+    /* ---- 31. 多参考模式：原站在输入框左上角显示「输入」标签和 @ 徽章 ----
+       依据原站截图 2026-10-16 220957：图片块连入后，框内是
+       「输入 [@] 使用参考内容，例如：@图片1 @视频1 @音频1」。 */
+    (function(){
+      W.S.nodes.length = 0; W.S.edges.length = 0; W.S.sel = null;
+      var v = W.addNode('video', 300, 120);
+      var img = W.addNode('image', 40, 420);
+      v.params.mode = 'omni'; v.showFrames = false;
+      W.addEdge(img.id, v.id, 'in');
+      W.render();
+
+      var vEl = nodeEl(v.id);
+      ok('多参考模式渲染出输入前缀', !!vEl.querySelector('.promptPre'),
+         'pre=' + !!vEl.querySelector('.promptPre'));
+      ok('输入前缀带 @ 徽章', !!vEl.querySelector('.promptPre .at'));
+      ok('输入框让出前缀的位置', /hasPre/.test(vEl.querySelector('.promptBox').className));
+      ok('多参考模式 placeholder 与原站一致',
+         vEl.querySelector('textarea.prompt').placeholder === '使用参考内容，例如：@图片1 @视频1 @音频1',
+         vEl.querySelector('textarea.prompt').placeholder);
+
+      // 非多参考模式不该有这个前缀（用户说的触发条件是「为多参考生成」）
+      W.S.edges.length = 0;
+      v.params.mode = 't2v'; v.showFrames = false;
+      W.render();
+      ok('非多参考模式没有输入前缀', !nodeEl(v.id).querySelector('.promptPre'));
+      ok('非多参考模式 placeholder 变回描述文案',
+         nodeEl(v.id).querySelector('textarea.prompt').placeholder === '描述你想要生成的视频内容',
+         nodeEl(v.id).querySelector('textarea.prompt').placeholder);
+
+      // 文本镜像态是只读的，也不该显示前缀
+      W.S.nodes.length = 0; W.S.edges.length = 0;
+      var t = W.addNode('text', 60, 120); t.text = '写点什么';
+      var v2 = W.addNode('video', 460, 120);
+      v2.params.mode = 'omni';
+      W.addEdge(t.id, v2.id, 'in');
+      W.render();
+      ok('文本镜像态没有输入前缀', !nodeEl(v2.id).querySelector('.promptPre'));
+    })();
+
   } catch (err){
     R.push('FAIL | 探针抛异常 | ' + (err && err.message ? err.message : String(err)) + ' @ ' + (err && err.stack ? String(err.stack).split('\n')[1] : ''));
     flush();

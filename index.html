@@ -126,6 +126,14 @@ textarea.prompt{width:100%;min-height:62px;resize:vertical;background:#17171a;bo
 textarea.prompt:focus{border-color:var(--ac)}
 textarea.prompt.mirror{background:#1b1b1f;color:var(--tx3);border-style:dashed;cursor:not-allowed}
 textarea.prompt:disabled{opacity:.6}
+/* 多参考模式：原站在输入框左上角先摆一个「输入」标签和一个 @ 徽章，
+   placeholder 跟在它们后面。见截图 2026-10-16 220957。 */
+.promptBox{position:relative}
+.promptPre{position:absolute;left:9px;top:8px;display:flex;align-items:center;gap:5px;
+  font-size:11.5px;color:var(--tx3);pointer-events:none;z-index:1}
+.promptPre .at{width:15px;height:15px;border-radius:50%;background:#2f6bff;color:#fff;
+  font-size:10px;font-style:normal;line-height:15px;text-align:center}
+.promptBox.hasPre textarea.prompt{padding-left:52px}
 .opts{display:flex;flex-direction:column;gap:5px}
 .opt{text-align:left;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:#17171a;font-size:12px;color:var(--tx2);transition:.12s}
 .opt:hover{border-color:var(--ac);color:var(--tx);background:#1f1f24}
@@ -142,10 +150,14 @@ textarea.prompt:disabled{opacity:.6}
 .cost{font-size:11px;color:var(--tx3)}
 .cost b{color:var(--tx2)}
 .frames{display:flex;flex-direction:column;gap:5px}
-.fslot{position:relative;display:flex;align-items:center;gap:8px;padding:6px 8px;border:1.5px dashed var(--line);border-radius:8px;background:#17171a}
+.fslot{display:flex;align-items:center;gap:8px;padding:6px 8px 6px 16px;border:1.5px dashed var(--line);border-radius:8px;background:#17171a}
 .fslot.filled{border-style:solid;border-color:#3d5c3f;background:#141a15}
-.fdot{width:12px;height:12px;border-radius:50%;background:var(--ac);border:2px solid var(--panel2);margin-left:-15px;flex:none;cursor:crosshair;position:relative;z-index:3}
-.fdot:hover{background:var(--ac2);transform:scale(1.3)}
+/* 首帧/尾帧的连接点：绝对定位挂到 .node 上，left 与 .port.in 一模一样，
+   于是它和进出端口落在同一条竖轴上（也就是块的边框上）。
+   注意 .fslot 上绝不能再有 position:relative —— 那会把 offsetParent 截在行内，
+   圆点就推不到块边框去了。垂直位置由 placeFrameDots() 按所在行的中心实时算。 */
+.fdot{position:absolute;left:-7px;top:0;width:12px;height:12px;border-radius:50%;background:var(--ac);border:2px solid var(--panel2);transform:translateY(-50%);cursor:crosshair;z-index:3}
+.fdot:hover{background:var(--ac2);transform:translateY(-50%) scale(1.3)}
 .fdot::after{content:"";position:absolute;inset:-8px}
 .fslot .ftxt{font-size:11px;color:var(--tx3);flex:none}
 .fslot .fthumb{width:26px;height:26px;border-radius:5px;background:#1a1a1c center/cover;border:1px solid var(--line);flex:none}
@@ -764,9 +776,14 @@ function bodyHTML(n){
   // 原站规则：一旦和任何节点连上（进或出都算），这个视频块就不再是起点，
   // 上传与图生视频两个入口就该收起来。规则与图片块一致，见 hasAnyEdge。
   const isSink = hasAnyEdge(n.id);
+  // 多参考模式下原站在输入框左上角先摆「输入」标签和 @ 徽章（见原站截图 2026-10-16 220957）。
+  // 文本镜像态下输入框是只读的、不该显示这个，所以只在可编辑且为 omni 时出。
+  const pre = (!mt.on && rm.mode === 'omni')
+    ? '<span class="promptPre">输入<i class="at">@</i></span>' : '';
 
-  return '<textarea class="prompt' + (mt.on ? ' mirror' : '') + '" data-bind="prompt"' +
-      (mt.on ? ' readonly' : '') + ' placeholder="' + ph + '">' + esc(mt.on ? mt.text : n.prompt) + '</textarea>' +
+  return '<div class="promptBox' + (pre ? ' hasPre' : '') + '">' + pre +
+      '<textarea class="prompt' + (mt.on ? ' mirror' : '') + '" data-bind="prompt"' +
+      (mt.on ? ' readonly' : '') + ' placeholder="' + ph + '">' + esc(mt.on ? mt.text : n.prompt) + '</textarea></div>' +
     chips + frames +
     (!mt.on && !isSink ? '<div class="opts">' +
       '<button class="opt" data-act="upVid">↑ 视频上传</button>' +
@@ -821,6 +838,30 @@ function nodeHTML(n){
  *
  * 必须用真实尺寸算，不能写死百分比：块高会随提示词、帧位行、提示文案变化。
  */
+/**
+ * 把首帧/尾帧的连接点摆到块的左边框上，与进出端口同一条竖轴，并记下连线锚点。
+ *
+ * 原来圆点是 .fslot 里的流内元素，靠 margin-left:-15px 顶出去，结果落在块内侧 11px，
+ * 和端口错开一截（实测 portIn.x=0.0 而 fdot.x=11.0）。现在改成绝对定位直接挂在 .node 上，
+ * left 复用端口那一套 -7px，垂直位置按所在帧位行的中心实时算，行高怎么变都不会错位。
+ *
+ * 锚点 n._fp 也在这里一并算：直接读圆点自己的 rect，不再用 offsetTop 加经验常数。
+ * 旧算法那句「+14」让连线终点比圆心低 12px、偏左 17px，是长期的观感毛刺，
+ * 这里换掉后自动消失。
+ */
+function placeFrameDots(n, el){
+  n._fp = {};
+  const er = el.getBoundingClientRect();
+  el.querySelectorAll('.fdot').forEach(d => {
+    const host = d.closest('.fslot');
+    if (!host) return;
+    const hr = host.getBoundingClientRect();
+    d.style.top = (hr.top + hr.height / 2 - er.top) + 'px';
+    const dr = d.getBoundingClientRect();
+    n._fp[d.dataset.port] = { x:dr.left + dr.width/2 - er.left, y:dr.top + dr.height/2 - er.top };
+  });
+}
+
 function placePorts(n, el){
   const h = n._h || 120;
   n._po = h / 2;
@@ -910,13 +951,7 @@ function render(){
     const el = W.querySelector('.node[data-id="' + n.id + '"]');
     if (!el) return;
     n._h = el.offsetHeight || 120;
-    n._fp = {};
-    el.querySelectorAll('.fdot').forEach(d => {
-      const host = d.closest('.fslot');
-      const dx = (host.offsetLeft + d.offsetLeft + d.offsetWidth/2) - 15;
-      const dy = host.offsetTop + d.offsetTop + d.offsetHeight/2 + 14;
-      n._fp[d.dataset.port] = { x:dx, y:dy };
-    });
+    placeFrameDots(n, el);
     placePorts(n, el);
   });
 

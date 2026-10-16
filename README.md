@@ -14,8 +14,8 @@
 
 | 文档 | 内容 |
 |---|---|
-| [`CHANGELOG.md`](CHANGELOG.md) | 17 条变更记录（首版 + 十六次修订） |
-| [`docs/dev-notes.md`](docs/dev-notes.md) | 踩过的 23 个坑，改代码前先看 |
+| [`CHANGELOG.md`](CHANGELOG.md) | 18 条变更记录（首版 + 十七次修订） |
+| [`docs/dev-notes.md`](docs/dev-notes.md) | 踩过的 26 个坑，改代码前先看 |
 
 ---
 
@@ -141,6 +141,16 @@ python backend.py
 降级时块内和日志都会给出提示，例如「未连接尾帧，按首帧生视频模式生成」。
 后端会**独立再校验一次**并回传 `effective_mode`，两边不会打架。
 
+### 多参考生成
+
+工具条切到「多参考生成」后，图片/视频/音频块连进视频块的普通入口即可，
+输入框左上角会出现原站那样的 **「输入 + @ 徽章」**前缀，
+placeholder 变成「使用参考内容，例如：@图片1 @视频1 @音频1」。
+参考素材齐了之后，每个素材在输入框下方显示成 `@图片1` 这样的芯片。
+
+> 前缀只在**可编辑且运行时模式为多参考**时出现。
+> 被文本块镜像时输入框是只读的，不显示前缀。
+
 ### 调参数
 
 鼠标**悬停或选中**生成块，块上方浮出一条工具条（可拖动）：
@@ -250,7 +260,7 @@ python backend.py
 python test_backend.py   # 82 项：请求体结构 + 校验分支 + 启动清理（mock urlopen）
 python test_upload.py    # 20 项：真实上传 → URL 可达 → 图片解码 → 灯箱（只写本地）
 python test_media.py     #  9 项：重绘/拖动/点空白都不能打断播放中的媒体
-python test_ui.py        # 169 项：无头浏览器 DOM 断言（真实 MouseEvent）
+python test_ui.py        # 184 项：无头浏览器 DOM 断言（真实 MouseEvent）
 python test_server.py    # 19 项：真启动服务 + 启动清理 + 路由 + 静态白名单
 ```
 
@@ -262,7 +272,7 @@ python test_server.py    # 19 项：真启动服务 + 启动清理 + 路由 + �
 > `_shot.png`、`_zshot.png` 和五个 `test_*_out.txt`。
 
 结果分别写到 `test_backend_out.txt` / `test_upload_out.txt` / `test_media_out.txt` /
-`test_ui_out.txt` / `test_server_out.txt`。合计 **299 项断言**。
+`test_ui_out.txt` / `test_server_out.txt`。合计 **314 项断言**。
 
 - `test_backend.py` 拦截 `urllib.request.urlopen`，断言视频用 `input.media` 数组、
   图像用 OpenAI 兼容平铺结构、`n` 是整数、`size` 用字母 x、互斥规则、模式降级、素材分档上限；
@@ -327,7 +337,7 @@ wan3画布/
 ├── test_ui.py         无头浏览器 DOM 断言
 ├── test_server.py     服务集成测试
 ├── docs/
-│   └── dev-notes.md   开发笔记：踩过的 23 个坑
+│   └── dev-notes.md   开发笔记：踩过的 26 个坑
 ├── CHANGELOG.md       变更记录
 ├── LICENSE            MIT
 ├── .env.example       Key 模板
@@ -355,7 +365,7 @@ wan3画布/
 
 ## 开发笔记
 
-改代码前踩过的 **23 个坑**都在 [`docs/dev-notes.md`](docs/dev-notes.md)。
+改代码前踩过的 **26 个坑**都在 [`docs/dev-notes.md`](docs/dev-notes.md)。
 每一条都对应一个真实存在过的 bug，比如：
 
 - `render()` 会销毁重建所有节点，`<video>`/`<audio>` 也在内 —— 播放器被重置回 0:00 的元凶
@@ -378,15 +388,19 @@ wan3画布/
 - **图片连入视频块时，本项目仍解析为 t2v**（输入框占位符是「描述你想要生成的视频内容」），
   原站截图里同一个情形显示的是 omni 的 `@图片1 @视频1 @音频1` 占位符。
   也就是说原站把「图片连入」直接当多参考素材处理，本项目当普通参考处理——待确认
-- **首帧/尾帧连线的终点比圆点中心低约 12px、偏左约 17px**（`_fp` 里既有的 `+14` 经验值）。
-  箭头看着仍落在圆点上，属于观感问题不是错位，本次改动没碰它。
-  已用 HEAD 版 A/B 实测确认是既有行为，不是端口避让带出来的——要不要修正待定
+- ~~首帧/尾帧连线的终点比圆点中心低 12px、偏左 17px~~ **已解决**（见
+  [`CHANGELOG.md`](CHANGELOG.md) 修订十七：锚点改成读圆点真实坐标后偏差归零）
+- **原站的成本显示单位未知**：原站视频块显示 `¥45`，本项目显示按官方单价折算的金额
+  （5 秒 720P 为 ¥2.10）。两者数量级对不上，可能是积分而非人民币，也可能分辨率档位不同
+  —— 原站那张截图里选的是「高清」，未确认对应哪一档，待确认
+- **原站工具条显示「Wan 3.0 Prime」**，本项目用的是 `wan3.0-video`。
+  官方是否有 Prime 变体、要不要加进模型列表，未确认
 
 ---
 
 ## 更新日志
 
-完整变更记录在 [`CHANGELOG.md`](CHANGELOG.md)，目前 **17 条**（首版 + 十六次修订），按时间倒序。
+完整变更记录在 [`CHANGELOG.md`](CHANGELOG.md)，目前 **18 条**（首版 + 十七次修订），按时间倒序。
 
 ---
 

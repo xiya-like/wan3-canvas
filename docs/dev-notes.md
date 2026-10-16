@@ -100,3 +100,19 @@
     测试内部再 `open()` 就是 `PermissionError`，
     五个套件会一起挂成 exit=1，看着像全崩了其实是自己把自己锁了。
     让测试自己写文件，我只取 stdout 的最后一行看结果。
+24. **`position:absolute` 的参照系是最近的「已定位」祖先，不是最近的父元素**。
+    想让圆点贴到块边框上，却在中间的容器上留了 `position:relative`，
+    offsetParent 就被截在容器里，无论负多少 margin 都推不到块边上。
+    本项目踩过：`.fslot{position:relative}` 是当年为了给流内 `.fdot` 当参照系才加的，
+    改成绝对定位后忘了删，圆点死活差 11px 挪不到位。
+    **改定位方式时记得连参照系一起改**，别只改被定位的那一个。
+25. **`offsetTop`/`offsetLeft` 拼出来的锚点迟早会漂，要读就读 `getBoundingClientRect()`**。
+    本项目用 `host.offsetTop + d.offsetTop + d.offsetHeight/2 + 14` 估算帧位连线锚点，
+    那个 `+14` 是当年为了让箭头看着不别扭硬加的经验值，
+    结果连线终点比圆心低 12px、偏左 17px，长期没人查。
+    换成读圆点自己的 rect 之后偏差直接归零——**经验常数一旦写进锚点，就会一直错下去**。
+26. **探针输出不要直接 `print` 到 Windows 控制台**。
+    控制台是 GBK，输出里只要有 `¥` 或 emoji 就 `UnicodeEncodeError`，
+    脚本挂在打印那一行，看起来像页面炸了，其实是编码问题。
+    探针结果一律先写 UTF-8 文件再读；探针内部用 `#MARK#` 这种不会和内容撞的标记包住结果
+    （用 `@@` 会和解隔符撞车，`find` 只截到第一段，看起来像只跑了一半）。
