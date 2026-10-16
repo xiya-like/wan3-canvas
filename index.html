@@ -810,14 +810,45 @@ function nodeHTML(n){
 }
 
 /* ===================== 渲染：连线 ===================== */
+
+/**
+ * 决定这个块的进出端口停在哪条水平线上（距块顶多少像素），并写回 DOM。
+ *
+ * 默认是块的垂直中线（CSS 里 top:50%）。但首尾帧生成时，首帧/尾帧的连接点也画在块左侧，
+ * 与上下居中的 .port 几乎叠在一起 —— 实测只差 4.4px，三个紫点糊成一坨。
+ * 所以帧位行可见时把端口抬到提示框的垂直中心：提示框永远排在帧位行上面，
+ * 于是三个点自然拉开。入端口和出端口一起挪，保持左右对齐，进出线不会一高一低。
+ *
+ * 必须用真实尺寸算，不能写死百分比：块高会随提示词、帧位行、提示文案变化。
+ */
+function placePorts(n, el){
+  const h = n._h || 120;
+  n._po = h / 2;
+  const dots = el.querySelectorAll('.fdot');
+  if (dots.length){
+    const er = el.getBoundingClientRect();
+    let topMost = Infinity;
+    dots.forEach(d => { topMost = Math.min(topMost, d.getBoundingClientRect().top - er.top); });
+    const pr = el.querySelector('.prompt');
+    let want = pr
+      ? pr.getBoundingClientRect().top - er.top + pr.getBoundingClientRect().height / 2
+      : 30;
+    if (topMost - want < 20) want = topMost - 20;   // 提示框太矮就贴到帧位行上方，绝不退回中线（那里正好撞车）
+    n._po = Math.max(24, Math.min(want, h - 12));  // 别钻进标题栏，也别掉到块外面
+  }
+  // CSS 是 top:50% + translateY(-50%)，覆盖 top 即可，transform 让圆点仍以该线为中心
+  el.querySelectorAll('.port').forEach(p => { p.style.top = n._po + 'px'; });
+}
+
 function anchor(n, side, port){
   const h = n._h || 120;
-  if (side === 'out') return { x:n.x + NW, y:n.y + h/2 };
+  const py = (n._po == null ? h / 2 : n._po);   // 端口不总在垂直中线，见 placePorts
+  if (side === 'out') return { x:n.x + NW, y:n.y + py };
   if (port === 'first' || port === 'last'){
     const fp = n._fp && n._fp[port];
     if (fp) return { x:n.x + fp.x, y:n.y + fp.y };
   }
-  return { x:n.x, y:n.y + h/2 };
+  return { x:n.x, y:n.y + py };
 }
 function pathD(x1, y1, x2, y2){
   const dx = Math.max(40, Math.abs(x2-x1) * 0.5);
@@ -886,6 +917,7 @@ function render(){
       const dy = host.offsetTop + d.offsetTop + d.offsetHeight/2 + 14;
       n._fp[d.dataset.port] = { x:dx, y:dy };
     });
+    placePorts(n, el);
   });
 
   restoreMedia(media, W);

@@ -749,6 +749,70 @@ PROBE = r"""
       W.S.sel = null; W.S.hover = null; W.renderHud();
     })();
 
+    /* ---- 29. 首尾帧模式：进出端口要避开首帧/尾帧两个连接点 ----
+       .port 默认 top:50%，而帧位点也画在块左侧，两者实测只差 4.4px，糊成一团。
+       placePorts() 在帧位行可见时把端口抬到提示框的垂直中心。 */
+    (function(){
+      W.S.nodes.length = 0; W.S.edges.length = 0; W.S.sel = null;
+      var v = W.addNode('video', 300, 120);
+      var img = W.addNode('image', 40, 420);
+      v.params.mode = 'fl'; v.showFrames = true;
+      W.render();
+
+      var vEl = nodeEl(v.id);
+      var midY = function(d){ var r = d.getBoundingClientRect(); return r.top + r.height/2; };
+      var pin = vEl.querySelector('.port.in'), pout = vEl.querySelector('.port.out');
+      var f1 = vEl.querySelector('.fdot[data-port="first"]');
+      var f2 = vEl.querySelector('.fdot[data-port="last"]');
+
+      ok('首尾帧模式下两个帧位连接点都在', !!f1 && !!f2);
+
+      // a) 纵向必须真的拉开（圆点半径 6px，20px 才有肉眼可见的间隔）
+      var g1 = Math.abs(midY(f1) - midY(pin)), g2 = Math.abs(midY(f2) - midY(pin));
+      ok('入端口与首帧连接点拉开 20px 以上', g1 >= 20, 'gap=' + g1.toFixed(1));
+      ok('入端口与尾帧连接点拉开 20px 以上', g2 >= 20, 'gap=' + g2.toFixed(1));
+
+      // b) 出入口必须同高，否则进线出线一高一低很难看
+      ok('出入端口左右对齐在同一水平线', Math.abs(midY(pin) - midY(pout)) < 0.6,
+         'd=' + Math.abs(midY(pin) - midY(pout)).toFixed(2));
+
+      // c) 端口不能被抬出块外面，也不能钻进标题栏
+      var vr = vEl.getBoundingClientRect(), pr = pin.getBoundingClientRect();
+      ok('端口仍在块的高度范围内', pr.top >= vr.top - 1 && pr.bottom <= vr.bottom + 1);
+
+      // d) 端口上移后，帧位连线仍走自己的锚点，不能被端口带偏
+      var e = W.addEdge(img.id, v.id, 'first');
+      W.render();
+      vEl = nodeEl(v.id);
+      var hit = el('#edges .edgeHit[data-edge="' + e.id + '"]');
+      ok('帧位连线仍然存在', !!hit);
+      if (hit){
+        var d = hit.getAttribute('d');
+        var endY = parseFloat(d.slice(d.lastIndexOf(' ') + 1).split(',')[1]);
+        var portWorldY = v.y + (parseFloat(vEl.querySelector('.port.in').style.top));
+        ok('帧位连线的终点不跟着端口走', Math.abs(endY - portWorldY) > 20,
+           'edgeEndY=' + endY.toFixed(1) + ' portY=' + portWorldY.toFixed(1));
+      }
+
+      // e) 不显示帧位行时，端口回到垂直中线（不能被永久顶上去）
+      v.params.mode = 'omni'; v.showFrames = false;
+      W.render();
+      vEl = nodeEl(v.id);
+      ok('多参考模式下没有帧位连接点', vEl.querySelectorAll('.fdot').length === 0);
+      var h = vEl.offsetHeight;
+      ok('多参考模式端口回到垂直中线',
+         Math.abs(parseFloat(vEl.querySelector('.port.in').style.top) - h/2) < 0.6,
+         'top=' + vEl.querySelector('.port.in').style.top + ' h/2=' + (h/2));
+
+      // f) 切回首尾帧，端口要重新避让（不能只算一次）
+      v.params.mode = 'fl'; v.showFrames = true;
+      W.render();
+      vEl = nodeEl(v.id);
+      ok('切回首尾帧后端口重新上移',
+         parseFloat(vEl.querySelector('.port.in').style.top) < h/2 - 10,
+         'top=' + vEl.querySelector('.port.in').style.top);
+    })();
+
   } catch (err){
     R.push('FAIL | 探针抛异常 | ' + (err && err.message ? err.message : String(err)) + ' @ ' + (err && err.stack ? String(err.stack).split('\n')[1] : ''));
     flush();
