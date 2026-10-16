@@ -310,8 +310,22 @@ PROBE = r"""
     var e2 = W.addEdge(a.id, b.id, 'in'); W.render();
     mouse(el('.edgeHit[data-edge="'+e2.id+'"]'), 'mousedown', 500, 300);
     ok('点连线可选中', W.S.selEdge === e2.id);
-    click(el('.edgeDel'));
-    ok('点中点叉能删连线', W.S.edges.indexOf(e2) < 0);
+
+    /* 中点叉号：必须断言「mousedown 之后元素还在文档里」。
+       真实浏览器只在 mousedown 和 mouseup 落在同一个仍被连接的元素上时才派发 click；
+       元素一旦脱离文档，click 就不在它身上触发 —— 而 dispatchEvent 对游离元素仍然会触发，
+       所以只断言「删掉了」是测不出这个 bug 的，必须额外查 isConnected。 */
+    var del = el('.edgeDel');
+    ok('中点叉号存在', !!del);
+    mouse(del, 'mousedown', 500, 300);
+    ok('叉号 mousedown 后仍连接在文档里', !!del && del.isConnected, 'connected=' + (del && del.isConnected));
+    ok('mousedown 不会把连线取消选中', W.S.selEdge === e2.id, W.S.selEdge);
+    ok('mousedown 不会顺手开起平移拖拽', !W.S.drag, W.S.drag && W.S.drag.type);
+    mouse(del, 'mouseup', 500, 300);
+    ok('叉号 mouseup 后仍在文档里', !!del && del.isConnected);
+    mouse(del, 'click', 500, 300);
+    ok('点中点叉能删连线', W.S.edges.indexOf(e2) < 0, 'edges=' + W.S.edges.length);
+    ok('删完叉号也消失了', !el('.edgeDel'));
 
     /* ---- 16b. 块内所有可交互元素：mousedown 绝不能把它重建掉 ----
        只要 mousedown 触发 render()，元素就会脱离文档，后续 click 冒泡不到委托监听器，

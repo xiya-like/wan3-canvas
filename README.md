@@ -220,7 +220,7 @@ python backend.py
 python test_backend.py   # 82 项：请求体结构 + 校验分支 + 启动清理（mock urlopen）
 python test_upload.py    # 20 项：真实上传 → URL 可达 → 图片解码 → 灯箱（只写本地）
 python test_media.py     #  9 项：重绘/拖动/点空白都不能打断播放中的媒体
-python test_ui.py        # 121 项：无头浏览器 DOM 断言（真实 MouseEvent）
+python test_ui.py        # 127 项：无头浏览器 DOM 断言（真实 MouseEvent）
 python test_server.py    # 19 项：真启动服务 + 启动清理 + 路由 + 静态白名单
 ```
 
@@ -232,7 +232,7 @@ python test_server.py    # 19 项：真启动服务 + 启动清理 + 路由 + �
 > `_shot.png`、`_zshot.png` 和五个 `test_*_out.txt`。
 
 结果分别写到 `test_backend_out.txt` / `test_upload_out.txt` / `test_media_out.txt` /
-`test_ui_out.txt` / `test_server_out.txt`。合计 **251 项断言**。
+`test_ui_out.txt` / `test_server_out.txt`。合计 **257 项断言**。
 
 - `test_backend.py` 拦截 `urllib.request.urlopen`，断言视频用 `input.media` 数组、
   图像用 OpenAI 兼容平铺结构、`n` 是整数、`size` 用字母 x、互斥规则、模式降级、素材分档上限；
@@ -388,6 +388,14 @@ wan3画布/
     跑完在 `finally` 里 `shutil.rmtree(..., ignore_errors=True)`。
     这不只是洁癖——这些目录会让 `git status` 变慢，还极易漏进 `.gitignore`
     （本项目就漏了两个目录，推 GitHub 时差点带进去 545 个文件）。
+20. **`dispatchEvent` 对游离元素照样会触发 `onclick`，所以「点完有效果」这种断言测不出真 bug。**
+    真实浏览器只在 mousedown 和 mouseup 落在同一个**仍在文档里**的元素上时才派发 click；
+    元素一旦被 mousedown 处理器移出文档，click 就不会落在它身上。
+    但测试里 `dispatchEvent` 直接对着那个已被移除的引用发事件，`onclick` 照跑不误，断言照样绿。
+    **凡是「mousedown 里可能动 DOM」的交互，断言必须额外查 `el.isConnected`**，否则等于没测。
+    （本项目在这个坑上复发第 14 次：连线中点的红色叉号。
+    上一条说的「必须派发完整 mousedown → mouseup → click」还不够，
+    关键在于派发完 mousedown 之后元素得**还在文档里**。）
 
 ---
 
@@ -403,6 +411,25 @@ wan3画布/
 ---
 
 ## 更新日志
+
+### 2026-10-16 · 第一版修订十一
+
+**修「连线中点的红色叉号按了没反应」**（Delete 键却是好的）：
+
+- 叉号是浮在 `#world` 上的 `div`，既不在 `.node` 里、也不带 `data-edge`，
+  于是 mousedown 一路掉到最下面的 `else` 分支：取消选中 → `renderEdges()`
+  → 第 909 行把这个叉号**自己删掉**。元素一脱离文档，浏览器就不会在它身上派发 click，
+  `onclick` 里的 `delEdge` 根本不会执行
+- 修法：在 mousedown 处理器里认下 `.edgeDel` 直接 return，既不取消选中也不起平移拖拽
+- Delete 键走的是完全另一条路（`S.selEdge`），所以一直好使，掩盖了这个 bug
+
+> **测试为什么没抓到？** 之前的断言是 `click(el('.edgeDel'))` 然后看连线有没有消失。
+> 可 `dispatchEvent` 对**已经脱离文档的元素**照样会触发它自己的 `onclick`，
+> 于是断言照样通过。真实浏览器只在 mousedown 和 mouseup 落在同一个**仍被连接**的元素上时
+> 才派发 click。
+> 所以光断言「点完删掉了」不够，**必须额外断言 `el.isConnected`** ——
+> 这是同一个坑（README 踩坑记录第 13 条）的变种，第 14 次复发。
+> 已用 A/B 对照实测确认：去掉修复后 `connected=false` / `selEdge=null`，加回修复全绿。
 
 ### 2026-10-16 · 第一版修订十
 
@@ -544,4 +571,4 @@ wan3画布/
 - 导出在顶栏、导入在左栏，无「发布」
 - 零外部依赖前端 + 纯标准库后端
 - 启动自动清空 `uploads/`，`media/` 与 `cache/` 永久保留
-- 五套零费用自测，共 251 项断言
+- 五套零费用自测，共 257 项断言

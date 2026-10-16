@@ -1226,6 +1226,13 @@ function initCanvas(){
     const portEl = e.target.closest('.port, .fdot');
     const nodeEl = e.target.closest('.node');
     const edgeEl = e.target.closest('[data-edge]');
+    const delEl = e.target.closest('.edgeDel');
+
+    // 中点那个红色叉号是浮在 #world 上的 div，既不在 .node 里、也不带 data-edge。
+    // 不在这里拦一手的话，它会掉进最下面的 else：取消选中 -> renderEdges() -> renderEdges() 第 909 行
+    // 把这个叉号自己给删了。元素一脱离文档，浏览器就不会再在它身上派发 click，
+    // onclick 里的 delEdge 根本不会执行 —— 表现就是「叉号按了没反应，只有 Delete 键好使」。
+    if (delEl){ e.preventDefault(); e.stopPropagation(); return; }
 
     if (edgeEl){ S.selEdge = edgeEl.dataset.edge; S.sel = null; render(); e.preventDefault(); return; }
 
