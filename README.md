@@ -211,6 +211,10 @@ python test_server.py    # 19 项：真启动服务 + 启动清理 + 路由 + �
 > ⚠️ 后两套会**真的启动后端**，因此会清空 `uploads/`（见下文「素材目录」）。
 > 跑测试前不用手动备份，那里面本来就不该留东西。
 
+> 跑测试**不会在项目目录留垃圾**。四个无头浏览器 profile 和临时探针页都建在
+> 系统临时目录里（`%TEMP%\wan3_*`），跑完自动删除。项目目录里最多只会多出
+> `_shot.png`、`_zshot.png` 和五个 `test_*_out.txt`。
+
 结果分别写到 `test_backend_out.txt` / `test_upload_out.txt` / `test_media_out.txt` /
 `test_ui_out.txt` / `test_server_out.txt`。合计 **236 项断言**。
 
@@ -361,6 +365,13 @@ wan3画布/
     要模板就建一次再用 `pop()` 摘掉，并且用 `clone()` 复制字段：
     直接 `n[k] = base[k]` 会让所有块共用同一个 `params` / `imgParams` 对象，
     改一个块的分辨率会连带改掉全部。
+19. **测试的临时文件不要建在项目目录里**。
+    无头浏览器的 `--user-data-dir` 尤其狠：每跑一次就往目录里塞两三百个
+    Edge 缓存/偏好/会话文件（本项目四个测试累计 **1085 个、40.9 MB**），
+    而且只增不减。正确做法是 `tempfile.mkdtemp(prefix="wan3_*")`，
+    跑完在 `finally` 里 `shutil.rmtree(..., ignore_errors=True)`。
+    这不只是洁癖——这些目录会让 `git status` 变慢，还极易漏进 `.gitignore`
+    （本项目就漏了两个目录，推 GitHub 时差点带进去 545 个文件）。
 
 ---
 
@@ -376,6 +387,24 @@ wan3画布/
 ---
 
 ## 更新日志
+
+### 2026-10-16 · 第一版修订九
+
+修「本地堆了一千多个垃圾文件」：
+
+- 四个测试脚本原本把无头浏览器的 profile 建在**项目目录**里
+  （`_edge_profile` / `_edge_profile2` / `_media_profile` / `_up_profile`），
+  实测累计 **1085 个文件、40.9 MB**，而且每跑一次测试就再长一批
+- 全部改到系统临时目录（`tempfile.mkdtemp(prefix="wan3_*")`），
+  跑完在 `finally` 里 `shutil.rmtree(..., ignore_errors=True)` 清掉
+- `test_ui.py` 的临时探针页 `_tmp_probe.html`（120 KB）也一并挪走
+- 保留 `_shot.png` / `_zshot.png` 在项目目录——那是给人看的成果，不是垃圾
+- `.gitignore` 里的 `*_profile*/` 与 `_tmp_*` 规则保留当兜底
+- 实测：跑完全部五套，项目目录里 profile 目录 0 个、临时页 0 个，
+  系统临时目录也无 `wan3_*` 残留；236 项断言仍全绿
+
+> 顺带发现旧 `.gitignore` 的 `_edge_profile*/` 没覆盖 `_media_profile` 和 `_up_profile`，
+> 推 GitHub 时会漏 545 个文件进去，已改成 `*_profile*/`。
 
 ### 2026-10-16 · 第一版修订八
 

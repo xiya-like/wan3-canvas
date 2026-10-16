@@ -7,14 +7,21 @@
 import io
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import urllib.parse
 
 DIR = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(DIR, "index.html")
-TMP = os.path.join(DIR, "_tmp_probe.html")
 EDGE = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+
+# 无头浏览器的 profile 和临时探针页一律建在系统临时目录里。
+# 建在项目目录的话，每次跑测试都会在仓库里堆几百个 Edge 缓存文件（实测一次就 280+ 个、11MB）。
+WORK = tempfile.mkdtemp(prefix="wan3_ui_")
+TMP = os.path.join(WORK, "_probe.html")
+PROFILE = os.path.join(WORK, "edge_profile")
 
 # 必须插在主脚本之前，否则抓不到 boot() 抛出的错
 ERROR_CATCH = r"""
@@ -491,6 +498,13 @@ PROBE = r"""
 
 
 def main():
+    try:
+        return run()
+    finally:
+        shutil.rmtree(WORK, ignore_errors=True)   # 临时目录用完即弃，项目目录保持干净
+
+
+def run():
     html = io.open(SRC, encoding="utf-8").read()
     html = html.replace("<body>", "<body>\n" + ERROR_CATCH, 1)
     html = html.replace("</body>", PROBE + "\n</body>")
@@ -500,7 +514,7 @@ def main():
     cmd = [
         EDGE, "--headless=new", "--disable-gpu", "--no-sandbox",
         "--window-size=1600,1000", "--virtual-time-budget=8000",
-        "--user-data-dir=" + os.path.join(DIR, "_edge_profile"),
+        "--user-data-dir=" + PROFILE,
         "--dump-dom", url,
     ]
     p = subprocess.run(cmd, capture_output=True, timeout=180)

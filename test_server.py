@@ -4,8 +4,10 @@
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -14,6 +16,10 @@ DIR = os.path.dirname(os.path.abspath(__file__))
 PORT = "8931"
 BASE = "http://127.0.0.1:" + PORT
 EDGE = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+
+# 无头浏览器的 profile 建在系统临时目录，用完即弃；
+# 截图 _shot.png 是给人看的成果，留在项目目录里。
+WORK = tempfile.mkdtemp(prefix="wan3_server_")
 
 R = []
 def ok(name, cond, extra=""):
@@ -129,7 +135,7 @@ try:
     shot = os.path.join(DIR, "_shot.png")
     cmd = [EDGE, "--headless=new", "--disable-gpu", "--no-sandbox",
            "--window-size=1600,1000", "--virtual-time-budget=7000",
-           "--user-data-dir=" + os.path.join(DIR, "_edge_profile2"),
+           "--user-data-dir=" + os.path.join(WORK, "edge_profile"),
            "--screenshot=" + shot, BASE + "/"]
     subprocess.run(cmd, capture_output=True, timeout=180)
     ok("截图已生成", os.path.exists(shot) and os.path.getsize(shot) > 5000,
@@ -152,6 +158,7 @@ finally:
             os.rmdir(_nest)
     except OSError:
         pass
+    shutil.rmtree(WORK, ignore_errors=True)
 
 npass = sum(1 for l in R if l.startswith("PASS"))
 io = "\n".join(R) + "\n\n===== %d/%d passed =====\n" % (npass, len(R))

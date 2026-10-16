@@ -6,8 +6,10 @@
 """
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 
@@ -15,6 +17,10 @@ DIR = os.path.dirname(os.path.abspath(__file__))
 PORT = "8934"
 BASE = "http://127.0.0.1:" + PORT
 EDGE = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+
+# 无头浏览器的 profile 建在系统临时目录，用完即弃。
+# 建在项目目录里的话，每次跑测试都会在仓库里堆 280+ 个 Edge 缓存文件。
+WORK = tempfile.mkdtemp(prefix="wan3_upload_")
 
 PROBE = r"""
 <pre id="probe" style="position:fixed;left:-99999px"></pre>
@@ -110,7 +116,7 @@ try:
     open(IDX, "wb").write(probe_version)          # 静态白名单只放行 index.html
     p = subprocess.run([EDGE, "--headless=new", "--disable-gpu", "--no-sandbox",
                         "--window-size=1400,900", "--virtual-time-budget=9000",
-                        "--user-data-dir=" + os.path.join(DIR, "_up_profile"),
+                        "--user-data-dir=" + os.path.join(WORK, "edge_profile"),
                         "--dump-dom", BASE + "/"], capture_output=True, timeout=200)
     out = (p.stdout or b"").decode("utf-8", "replace")
     m = re.search(r"@@(.*?)@@", out, re.S)
@@ -125,3 +131,4 @@ finally:
     open(IDX, "wb").write(original)
     restored = open(IDX, "rb").read()
     print("index.html 已还原:", restored == original)
+    shutil.rmtree(WORK, ignore_errors=True)

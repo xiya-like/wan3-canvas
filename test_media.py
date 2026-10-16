@@ -4,11 +4,15 @@
 媒体元素保全测试：重绘、拖动、点空白都不能打断正在播放的音视频。
 用纯 Python 生成一段 WAV 当素材（不依赖 ffmpeg），走和 <video> 完全相同的 stash/restore 逻辑。
 """
-import io, math, os, re, struct, subprocess, sys, time, urllib.request
+import io, math, os, re, shutil, struct, subprocess, sys, tempfile, time, urllib.request
 
 DIR = os.path.dirname(os.path.abspath(__file__))
 PORT = "8940"; BASE = "http://127.0.0.1:" + PORT
 EDGE = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+
+# 无头浏览器的 profile 建在系统临时目录，用完即弃。
+# 建在项目目录里的话，每次跑测试都会在仓库里堆 280+ 个 Edge 缓存文件。
+WORK = tempfile.mkdtemp(prefix="wan3_media_")
 
 # 生成 1 秒 440Hz 正弦 WAV
 SR, DUR = 8000, 1.0
@@ -101,7 +105,7 @@ try:
         except Exception: time.sleep(0.2)
     p = subprocess.run([EDGE, "--headless=new", "--disable-gpu", "--no-sandbox", "--autoplay-policy=no-user-gesture-required",
                         "--window-size=1400,900", "--virtual-time-budget=9000",
-                        "--user-data-dir=" + os.path.join(DIR, "_media_profile"),
+                        "--user-data-dir=" + os.path.join(WORK, "edge_profile"),
                         "--dump-dom", BASE + "/"], capture_output=True, timeout=200)
     dom = (p.stdout or b"").decode("utf-8", "replace")
     m = re.search(r"@@(.*?)@@", dom, re.S)
@@ -117,3 +121,4 @@ finally:
     print("index.html restored:", open(IDX, "rb").read() == original)
     p2 = os.path.join(DIR, "uploads", "probe_tone.wav")
     if os.path.exists(p2): os.remove(p2)
+    shutil.rmtree(WORK, ignore_errors=True)
