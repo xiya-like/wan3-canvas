@@ -458,40 +458,85 @@ PROBE = r"""
       W.delNode(za.id); W.delNode(zb.id);
     })();
 
-    /* ---- 23. 导入工作流：块数不能被模板节点翻倍（异步 FileReader） ----
+    /* ---- 24. 保存并覆盖当前 JSON ----
+       浏览器不会暴露用户选的文件路径，所以「覆盖同一个文件」只能靠
+       File System Access API 的 FileSystemFileHandle。这里不发真实写入，
+       只验证句柄绑定、按钮状态与空画布保护。 */
+    ok('顶栏有保存按钮', !!el('#saveBtn'));
+    ok('导入按钮与保存按钮同时存在', !!el('#impBtn') && !!el('#saveBtn') && !!el('#expBtn'));
+    (function(){
+      // 干净起点：假装从没保存过
+      W.S.fileHandle = null; W.S.fileName = ''; W.S.fileNodeCount = 0;
+      W.renderTop();
+      ok('没绑定文件时保存按钮不点亮', !el('#saveBtn').classList.contains('on'));
+      ok('没绑定文件时提示为另存为', el('#saveBtn').title.indexOf('另存为') >= 0, el('#saveBtn').title);
+
+      // 载入一份工作流
+      W.loadWfText(JSON.stringify({ name:'保存测试', nodes:[
+        { type:'text', x:10, y:10, text:'甲' },
+        { type:'video', x:300, y:10, prompt:'乙' }
+      ], edges:[] }), null, '');
+      ok('载入后有两个块', W.S.nodes.length === 2, 'n=' + W.S.nodes.length);
+
+      // 绑定一个假句柄，等价于「导入时拿到了 handle」
+      var fake = { name:'my-wf.json', __fake:true };
+      W.setCurrentFile(fake, 'my-wf.json');
+      ok('绑定后保存按钮点亮', el('#saveBtn').classList.contains('on'));
+      ok('绑定后提示写明要覆盖哪个文件',
+        el('#saveBtn').title === '保存并覆盖 my-wf.json', el('#saveBtn').title);
+      ok('状态记住了文件名', W.S.fileName === 'my-wf.json', W.S.fileName);
+
+      // 导出内容应当是完整工作流（别把 JSON 原文塞进 extra，会把结果行撑成多行）
+      var parsed = JSON.parse(W.wfText());
+      ok('序列化内容含全部块', parsed.nodes.length === 2 && parsed.name === '保存测试',
+        'nodes=' + parsed.nodes.length + ' name=' + parsed.name);
+      ok('序列化内容含边数组与版本号', Array.isArray(parsed.edges) && parsed.version === 2);
+
+      // 空画布保护：把块删光，fileNodeCount 仍是 2，保存必须先确认
+      W.S.nodes.length = 0;
+      ok('空画布时 fileNodeCount 仍记住原来有内容', W.S.fileNodeCount === 2, 'c=' + W.S.fileNodeCount);
+      var asked = false;
+      var realConfirm = window.confirm;
+      window.confirm = function(){ asked = true; return false; };   // 模拟用户点「取消」
+      W.S.sel = null;
+      // 走保存的守卫分支：这里只验证 confirm 被调用过（fake 句柄 createWritable 不可用，
+      // 所以真正落盘会失败，但守卫必须先拦住）
+      var p = W.saveWf();
+      ok('空画布覆盖会先弹确认', asked);
+      window.confirm = realConfirm;
+    })();
+
+    /* ---- 23. 导入工作流：块数不能被模板节点翻倍 ----
        曾经拿 newNode() 当字段模板，它会把模板块本身 push 进 S.nodes，
        而 forEach 只遍历原始长度 —— 导入一次，块数直接翻一倍。 */
-    try {
-      var wf = JSON.stringify({ name:'导入测试', edges:[], nodes:[
+    (function(){
+      var n0 = W.S.nodes.length;
+      W.loadWfText(JSON.stringify({ name:'导入测试', edges:[], nodes:[
         { type:'text',  x:10,  y:10 },
         { type:'video', x:300, y:10 },
         { type:'image', x:600, y:10 }
-      ]});
-      W.importWf(new File([wf], 'w.json', { type:'application/json' }));
-      var t0 = Date.now();
-      (function wait(){
-        var n = W.S.nodes.length;
-        var done = (n === 3 && W.S.nodes[0] && W.S.nodes[0].z === 1);
-        if (done || Date.now() - t0 > 4000){
-          ok('导入 3 个块后节点数就是 3', n === 3, 'n=' + n);
-          ok('导入后每块都有独立且不重复的 z',
-            n === 3 && new Set(W.S.nodes.map(function(x){return x.z;})).size === 3,
-            W.S.nodes.map(function(x){return x.z;}).join(','));
-          ok('导入后 S.zTop 顶到最高，新块不会盖过导入的块', n === 3 && W.S.zTop === 3, 'zTop=' + W.S.zTop);
-          flush();
-          return;
-        }
-        setTimeout(wait, 30);
-      })();
-    } catch (e){
-      ok('导入工作流', false, String(e && e.message));
-      flush();
-    }
+      ]}), null, '');
+      ok('导入 3 个块后节点数就是 3', W.S.nodes.length === 3, 'before=' + n0 + ' after=' + W.S.nodes.length);
+      ok('导入后每块都有独立且不重复的 z',
+        new Set(W.S.nodes.map(function(x){return x.z;})).size === 3,
+        W.S.nodes.map(function(x){return x.z;}).join(','));
+      ok('导入后 S.zTop 顶到最高，新块不会盖过导入的块', W.S.zTop === 3, 'zTop=' + W.S.zTop);
+      ok('导入的项目名被采用', W.S.proj === '导入测试', W.S.proj);
+      // 没有句柄时不应假装绑定了文件
+      ok('没走选择器的导入不会点亮保存按钮', !el('#saveBtn').classList.contains('on'));
+      // 多个块的参数对象必须是各自独立的，改一个不影响另一个
+      W.loadWfText(JSON.stringify({ name:'共享检查', edges:[], nodes:[
+        { type:'video', x:0, y:0 }, { type:'video', x:0, y:0 }
+      ]}), null, '');
+      W.S.nodes[0].params.duration = 99;
+      ok('两个视频块的参数对象不共用', W.S.nodes[1].params.duration !== 99, W.S.nodes[1].params.duration);
+    })();
 
   } catch (err){
     R.push('FAIL | 探针抛异常 | ' + (err && err.message ? err.message : String(err)) + ' @ ' + (err && err.stack ? String(err.stack).split('\n')[1] : ''));
     flush();
   }
+  flush();
 })();
 </script>
 """

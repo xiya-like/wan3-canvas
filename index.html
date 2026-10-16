@@ -32,6 +32,9 @@ button{cursor:pointer;background:none;border:none}
 .btn.pri:hover{background:var(--ac2)}
 .btn.sm{height:27px;padding:0 9px;font-size:12px;border-radius:7px}
 .btn:disabled{opacity:.45;cursor:not-allowed}
+/* 保存：已绑定文件时点亮，保存成功闪一下绿 */
+.btn.on{border-color:var(--ac);color:var(--ac)}
+.btn.flash{background:var(--ac);border-color:var(--ac);color:#fff;transition:background .1s}
 .inp{width:100%;background:#17171a;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12.5px;outline:none;transition:.15s}
 .inp:focus{border-color:var(--ac)}
 .tag{font-size:11px;padding:2px 7px;border-radius:20px;border:1px solid var(--line);color:var(--tx2);white-space:nowrap}
@@ -264,6 +267,9 @@ const S = {
   logs: [], running: false, hasKey: null, backend: null, cfg: DEFAULT_CFG,
   proj: '未命名项目', history: [], clipboard: null,
   pop: null, ctx: null, renaming: null, dropOver: false,
+  fileHandle: null,        // 当前工作流文件的 FileSystemFileHandle，保存时原地覆盖
+  fileName: '',            // 目标文件名，给用户看清楚会覆盖谁
+  fileNodeCount: 0,        // 上次保存时有多少个块 —— 防止误把空画布覆盖上去
 };
 let uid = 1;
 const nid = () => 'n' + (uid++);
@@ -1604,49 +1610,220 @@ function topo(){
   return order.map(nodeById).filter(Boolean);
 }
 
-/* ===================== 导入导出 ===================== */
-function exportWf(){
-  const blob = new Blob([JSON.stringify({ version:2, name:S.proj, nodes:S.nodes, edges:S.edges }, null, 2)], { type:'application/json' });
+/* ===================== 导入导出保存 ===================== */
+/**
+ * 「保存并覆盖当前 json」能实现，靠的是 File System Access API。
+ * 浏览器出于安全**永远不会**告诉你用户选的文件在磁盘上的真实路径——
+ * 连 <input type=file> 拿到的 File 对象也没有路径。
+ * 所以导入时必须用 showOpenFilePicker() 换回一个 FileSystemFileHandle，
+ * 保存时再用这个句柄 createWritable() 原地覆写，才是真的覆盖，不是「再下载一份」。
+ * 句柄可以结构化克隆后存进 IndexedDB，刷新页面后仍能覆盖同一个文件。
+ */
+const FSA_OK = typeof window.showSaveFilePicker === 'function';
+
+const FH = {
+  _db: null,
+  open(){
+    if (this._db) return Promise.resolve(this._db);
+    if (!window.indexedDB) return Promise.resolve(null);
+    return new Promise(res => {
+      let rq;
+      try { rq = indexedDB.open('wan3wf', 1); } catch(e){ return res(null); }
+      rq.onupgradeneeded = () => { try { rq.result.createObjectStore('kv'); } catch(e){} };
+      rq.onsuccess = () => { this._db = rq.result; res(rq.result); };
+      rq.onerror = () => res(null);
+    });
+  },
+  async get(k){
+    const db = await this.open();
+    if (!db) return null;
+    return new Promise(res => {
+      try {
+        const rq = db.transaction('kv').objectStore('kv').get(k);
+        rq.onsuccess = () => res(rq.result == null ? null : rq.result);
+        rq.onerror = () => res(null);
+      } catch(e){ res(null); }
+    });
+  },
+  async set(k, v){
+    const db = await this.open();
+    if (!db) return false;
+    return new Promise(res => {
+      try {
+        const tx = db.transaction('kv', 'readwrite');
+        tx.objectStore('kv').put(v, k);
+        tx.oncomplete = () => res(true);
+        tx.onerror = () => res(false);
+      } catch(e){ res(false); }
+    });
+  },
+  async clear(){
+    const db = await this.open();
+    if (!db) return;
+    try { db.transaction('kv', 'readwrite').objectStore('kv').clear(); } catch(e){}
+  },
+};
+
+const JSON_TYPE = [{ description:'工作流 JSON', accept:{ 'application/json':['.json'] } }];
+
+function wfText(){
+  return JSON.stringify({ version:2, name:S.proj, nodes:S.nodes, edges:S.edges }, null, 2);
+}
+function downloadJson(text, name){
+  const blob = new Blob([text], { type:'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = (S.proj || 'workflow') + '.json';
+  a.download = name;
   a.click();
-  L('已导出工作流 JSON', 'dim');
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
-function importWf(file){
-  const r = new FileReader();
-  r.onload = () => {
+/** 导出 = 永远另存一份下载，不碰句柄 */
+function exportWf(){
+  downloadJson(wfText(), (S.fileName || (S.proj || 'workflow') + '.json'));
+  L('已导出工作流 JSON' + (S.fileName ? '（' + S.fileName + '）' : ''), 'dim');
+}
+
+async function setCurrentFile(handle, name){
+  S.fileHandle = handle;
+  S.fileName = name;
+  S.fileNodeCount = S.nodes.length;
+  renderTop();                       // 先点亮按钮，别让界面等 IndexedDB
+  await FH.set('handle', handle);
+  await FH.set('name', name);
+  await FH.set('count', S.fileNodeCount);
+}
+async function ensureWritable(h){
+  const opt = { mode:'readwrite' };
+  try {
+    if ((await h.queryPermission(opt)) === 'granted') return true;
+    return (await h.requestPermission(opt)) === 'granted';
+  } catch(e){ return false; }
+}
+async function writeHandle(h, text){
+  const w = await h.createWritable();
+  await w.write(new Blob([text], { type:'application/json' }));
+  await w.close();
+}
+
+/**
+ * 保存。优先原地覆盖 S.fileHandle；
+ * 没有句柄就弹「另存为」；浏览器不支持 File System Access API 就退回下载。
+ */
+async function saveWf(){
+  const text = wfText();
+  // 空画布 + 文件里本来有东西 —— 盖上去等于把用户的工作流删了，必须拦一下
+  if (!S.nodes.length && S.fileNodeCount > 0){
+    if (!confirm('当前画布是空的，保存会清空「' + S.fileName + '」里的 ' + S.fileNodeCount +
+                 ' 个块。\n确定要继续吗？')) return;
+  }
+  if (S.fileHandle){
     try {
-      const j = JSON.parse(r.result);
-      if (!Array.isArray(j.nodes)) throw new Error('缺少 nodes');
-      S.nodes = j.nodes; S.edges = j.edges || [];
-      // 补齐新版本字段，老工作流也能载入。
-      // 坑：不能直接拿 newNode() 当模板——它会把模板块本身 push 进 S.nodes，
-      // 而 forEach 只遍历原始长度，于是多出来的垃圾块留在数组里，导入一次块数就翻倍。
-      const base = newNode('text', 0, 0);
-      S.nodes.pop();
-      S.nodes.forEach(n => {
-        Object.keys(base).forEach(k => {
-          if (n[k] === undefined) n[k] = clone(base[k]);   // clone：否则多个块共用同一个参数对象
-        });
-        n.gen = Object.assign({ status:null, taskId:null, resultUrl:null, error:'', images:[], effective:'' }, n.gen || {});
-        n.barOff = n.barOff || { dx:0, dy:0 };
-        n.id = n.id || nid();
+      if (await ensureWritable(S.fileHandle)){
+        await writeHandle(S.fileHandle, text);
+        S.fileNodeCount = S.nodes.length;
+        await FH.set('count', S.fileNodeCount);
+        L('已保存并覆盖 ' + S.fileName, 'ok');
+        flashSave();
+        return;
+      }
+    } catch(e){
+      toast('写入失败（' + (e.message || e) + '），改为另存为', 'err');
+    }
+  }
+  saveAs(text);
+}
+function saveAs(text){
+  const name = S.fileName || ((S.proj || 'workflow') + '.json');
+  if (FSA_OK){
+    window.showSaveFilePicker({ suggestedName:name, types:JSON_TYPE })
+      .then(async h => {
+        await writeHandle(h, text);
+        await setCurrentFile(h, h.name);
+        L('已保存到 ' + h.name, 'ok');
+        flashSave();
+      })
+      .catch(e => {
+        if (e && e.name === 'AbortError') return;       // 用户自己取消，不算错误
+        toast('保存失败：' + (e.message || e), 'err');
       });
-      // 叠放次序统一重排（老 JSON 没有 z），顺便把 S.zTop 顶到最高
-      S.nodes.forEach((n, i) => { n.z = i + 1; });
-      S.zTop = S.nodes.length;
-      let mx = uid;
-      S.nodes.forEach(n => { const m = /^n(\d+)$/.exec(n.id); if (m) mx = Math.max(mx, Number(m[1])); });
-      uid = mx + 1;
-      S.sel = null; S.selEdge = null;
-      if (j.name) S.proj = j.name;
-      $('#proj').value = S.proj;
-      L('已载入工作流（' + S.nodes.length + ' 个块）', 'ok');
-      render();
-    } catch (e){ toast('工作流文件解析失败：' + e.message, 'err'); }
-  };
+  } else {
+    downloadJson(text, name);
+    L('已下载 ' + name + '（当前浏览器不支持原地覆盖，导入请用左栏 ↥）', 'dim');
+  }
+}
+function flashSave(){
+  const b = $('#saveBtn');
+  if (!b) return;
+  b.classList.add('flash');
+  setTimeout(() => b.classList.remove('flash'), 600);
+}
+
+function importWf(file, handle){
+  const r = new FileReader();
+  r.onload = () => loadWfText(String(r.result), handle, file && file.name);
   r.readAsText(file);
+}
+/** 左栏 ↥ —— 优先走 showOpenFilePicker 才能拿到句柄，保存时才能真的覆盖 */
+async function importWfPicker(){
+  if (typeof window.showOpenFilePicker !== 'function'){
+    const i = document.createElement('input');
+    i.type = 'file'; i.accept = '.json';
+    i.onchange = () => { if (i.files[0]) importWf(i.files[0], null); };
+    i.click();
+    return;
+  }
+  try {
+    const hs = await window.showOpenFilePicker({ types:JSON_TYPE, multiple:false });
+    const h = hs[0];
+    if (!h) return;
+    const f = await h.getFile();
+    loadWfText(await f.text(), h, f.name);
+  } catch(e){
+    if (e && e.name === 'AbortError') return;         // 取消是正常操作
+    toast('打开失败：' + (e.message || e), 'err');
+  }
+}
+function loadWfText(text, handle, name){
+  try {
+    const j = JSON.parse(text);
+    if (!Array.isArray(j.nodes)) throw new Error('缺少 nodes');
+    S.nodes = j.nodes; S.edges = j.edges || [];
+    // 补齐新版本字段，老工作流也能载入。
+    // 坑：不能直接拿 newNode() 当模板——它会把模板块本身 push 进 S.nodes，
+    // 而 forEach 只遍历原始长度，于是多出来的垃圾块留在数组里，导入一次块数就翻倍。
+    const base = newNode('text', 0, 0);
+    S.nodes.pop();
+    S.nodes.forEach(n => {
+      Object.keys(base).forEach(k => {
+        if (n[k] === undefined) n[k] = clone(base[k]);   // clone：否则多个块共用同一个参数对象
+      });
+      n.gen = Object.assign({ status:null, taskId:null, resultUrl:null, error:'', images:[], effective:'' }, n.gen || {});
+      n.barOff = n.barOff || { dx:0, dy:0 };
+      n.id = n.id || nid();
+    });
+    // 叠放次序统一重排（老 JSON 没有 z），顺便把 S.zTop 顶到最高
+    S.nodes.forEach((n, i) => { n.z = i + 1; });
+    S.zTop = S.nodes.length;
+    let mx = uid;
+    S.nodes.forEach(n => { const m = /^n(\d+)$/.exec(n.id); if (m) mx = Math.max(mx, Number(m[1])); });
+    uid = mx + 1;
+    S.sel = null; S.selEdge = null;
+    if (j.name) S.proj = j.name;
+    $('#proj').value = S.proj;
+    L('已载入工作流（' + S.nodes.length + ' 个块）', 'ok');
+    render();
+    if (handle) setCurrentFile(handle, name || (handle.name || 'workflow.json'));
+    else { S.fileHandle = null; S.fileName = name || ''; S.fileNodeCount = S.nodes.length; renderTop(); }
+  } catch (e){ toast('工作流文件解析失败：' + e.message, 'err'); }
+}
+/** 刷新后恢复「上次保存到哪个文件」，这样保存仍然覆盖同一个文件 */
+async function restoreFileHandle(){
+  const h = await FH.get('handle');
+  if (!h) return;
+  S.fileHandle = h;
+  S.fileName = (await FH.get('name')) || h.name || '';
+  S.fileNodeCount = (await FH.get('count')) || 0;
+  renderTop();
 }
 
 /* ===================== 顶栏 / 历史 / 日志 ===================== */
@@ -1666,6 +1843,20 @@ function renderTop(){
   b.disabled = S.running || S.backend === false || S.hasKey === false;
   b.textContent = S.running ? '生成中…' : '▶ 运行工作流';
   $('#addBtn').classList.toggle('on', $('#addPanel').classList.contains('show'));
+  // 保存按钮要让人一眼看出「会覆盖哪个文件」
+  const sv = $('#saveBtn');
+  if (sv){
+    if (S.fileName){
+      sv.title = '保存并覆盖 ' + S.fileName;
+      sv.textContent = '保存';
+      sv.classList.add('on');
+    } else {
+      sv.title = FSA_OK ? '保存到本地 JSON 文件（首次会弹出另存为）'
+                        : '当前浏览器不支持原地覆盖，保存会退回下载';
+      sv.textContent = '保存';
+      sv.classList.remove('on');
+    }
+  }
 }
 function renderLog(){
   const b = $('#logBody');
@@ -1695,14 +1886,15 @@ function boot(){
     '<span class="tag" id="keytag">检测中…</span>' +
     '<button class="btn sm" id="histBtn">历史</button>' +
     '<button class="btn sm" id="autoBtn">自动排版</button>' +
-    '<button class="btn sm" id="expBtn">导出</button>' +
+    '<button class="btn sm" id="saveBtn" title="保存并覆盖当前 JSON">保存</button>' +
+    '<button class="btn sm" id="expBtn" title="另存一份到下载目录">导出</button>' +
     '<button class="btn pri" id="runbtn">▶ 运行工作流</button>' +
   '</div>' +
   '<div class="main">' +
     '<div class="rail">' +
       '<button class="rbtn" id="addBtn" title="添加块（T/I/V/P/U）">＋</button>' +
       '<button class="rbtn" id="linkBtn" title="从块的右侧紫点拖到目标块即可连线">⇢</button>' +
-      '<button class="rbtn" id="impBtn" title="导入工作流 JSON">↥</button>' +
+      '<button class="rbtn" id="impBtn" title="导入工作流 JSON（导入后保存即可覆盖原文件）">↥</button>' +
       '<button class="rbtn" id="helpBtn" title="用法">?</button>' +
     '</div>' +
     '<div class="col">' +
@@ -1744,6 +1936,8 @@ function boot(){
     '<p><b>调参数</b>：鼠标悬停或选中生成块，块上方会浮出工具条，模型/模式/时长/分辨率/比例/配音都在那儿。</p>' +
     '<p><b>右键块</b>：复制、创建副本、重命名、删除。</p>' +
     '<p><b>删连线</b>：点选后按 <code>Delete</code>、点连线中点的 ✕，或点画布空白处取消。</p>' +
+    '<p><b>导入 / 保存 / 导出</b>：左栏 <code>↥</code> 导入已有 JSON，导入后点顶栏「保存」会<b>原地覆盖那个文件</b>（按钮悬停会显示要覆盖的文件名）；「导出」则永远是另存一份到下载目录。' +
+      (FSA_OK ? '' : '<span style="color:var(--warn)">当前浏览器不支持原地覆盖，保存会退回下载。</span>') + '</p>' +
     '<p style="color:var(--warn)">成本提示：一次只跑一个生成任务。视频按秒计费，跑之前先看块内「预计 ¥」。</p>' +
   '</div></div>';
 
@@ -1763,8 +1957,9 @@ function boot(){
   $('#proj').oninput = e => { S.proj = e.target.value; };
   $('#runbtn').onclick = runAll;
   $('#autoBtn').onclick = autoLayout;
+  $('#saveBtn').onclick = saveWf;
   $('#expBtn').onclick = exportWf;
-  $('#impBtn').onclick = () => { const i = document.createElement('input'); i.type='file'; i.accept='.json'; i.onchange = () => { if (i.files[0]) importWf(i.files[0]); }; i.click(); };
+  $('#impBtn').onclick = importWfPicker;
   $('#helpBtn').onclick = () => $('#help').classList.add('show');
   $('#help').onclick = e => { if (e.target.id === 'help') $('#help').classList.remove('show'); };
   $('#lb').onclick = e => { if (e.target.id === 'lb' || e.target.id === 'lbImg') closeLightbox(); };
@@ -1859,12 +2054,16 @@ function boot(){
       L('连不上后端服务。你多半是直接双击 index.html 打开的 —— 请先在项目目录执行 python backend.py，再访问 http://127.0.0.1:8000', 'err');
     });
 
+  // 恢复「上次保存到哪个文件」，这样刷新后保存仍然覆盖同一个文件
+  restoreFileHandle();
+
   // 供无头浏览器验收使用的只读探针（不暴露任何写能力）
   window.__wf = {
     S, addNode, resolveVideo, canConnect, nodePorts, role, mirrorText, topo, isGen,
     imgWay, canGenerate, costText, upsOf, edgeOf, upstreamImages, upstreamMedia,
     addEdge, render, softSync, delNode, delEdge, copyNode, duplicateNode,
-    uploadFiles, fillSlot, mediaHTML, bringToFront, importWf,
+    uploadFiles, fillSlot, mediaHTML, bringToFront,
+    loadWfText, wfText, saveWf, setCurrentFile, FSA_OK, renderTop,
     cost: () => ({ video: videoCost(S.nodes.find(n => n.type === 'video') || { params:{ resolution:'720P', duration:5 } }) }),
   };
 }

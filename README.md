@@ -171,8 +171,24 @@ python backend.py
 
 ### 导入导出
 
-- **导出**：顶栏「导出」，工作流存成 JSON
-- **导入**：左栏 `↥` 按钮
+- **导入**：左栏 `↥` 按钮，选一个 JSON 文件
+- **保存**：顶栏「保存」，**原地覆盖**当前这个 JSON 文件，不弹任何对话框。
+  按钮在绑定文件后会亮起来，鼠标悬停能看到「保存并覆盖 xxx.json」
+- **导出**：顶栏「导出」，永远是另存一份到下载目录，不碰当前文件
+
+> **为什么保存能做到真覆盖？**
+> 浏览器出于安全**永远不会**告诉你用户选的文件在磁盘上的真实路径——连
+> `<input type="file"> 拿到的 `File` 对象也没有路径。所以导入走的是
+> File System Access API 的 `showOpenFilePicker()`，换回一个 `FileSystemFileHandle`；
+> 保存时用这个句柄 `createWritable()` 覆写。句柄会存进 IndexedDB，
+> **刷新页面后保存仍然覆盖同一个文件**。
+> 换句话说：`导入 → 改 → 保存` 就是一个原地编辑循环，导出反而是多余的。
+>
+> Edge / Chrome 支持；Firefox、Safari 不支持，此时保存会退回「下载一份」，
+> 按钮上的提示会写明。
+
+安全兜底：如果你清空了画布但这个文件里本来有块，保存会先弹确认——
+防止一次手滑把工作流整个覆盖成空。
 
 ### 运行
 
@@ -204,7 +220,7 @@ python backend.py
 python test_backend.py   # 82 项：请求体结构 + 校验分支 + 启动清理（mock urlopen）
 python test_upload.py    # 20 项：真实上传 → URL 可达 → 图片解码 → 灯箱（只写本地）
 python test_media.py     #  9 项：重绘/拖动/点空白都不能打断播放中的媒体
-python test_ui.py        # 106 项：无头浏览器 DOM 断言（真实 MouseEvent）
+python test_ui.py        # 121 项：无头浏览器 DOM 断言（真实 MouseEvent）
 python test_server.py    # 19 项：真启动服务 + 启动清理 + 路由 + 静态白名单
 ```
 
@@ -216,7 +232,7 @@ python test_server.py    # 19 项：真启动服务 + 启动清理 + 路由 + �
 > `_shot.png`、`_zshot.png` 和五个 `test_*_out.txt`。
 
 结果分别写到 `test_backend_out.txt` / `test_upload_out.txt` / `test_media_out.txt` /
-`test_ui_out.txt` / `test_server_out.txt`。合计 **236 项断言**。
+`test_ui_out.txt` / `test_server_out.txt`。合计 **251 项断言**。
 
 - `test_backend.py` 拦截 `urllib.request.urlopen`，断言视频用 `input.media` 数组、
   图像用 OpenAI 兼容平铺结构、`n` 是整数、`size` 用字母 x、互斥规则、模式降级、素材分档上限；
@@ -227,7 +243,7 @@ python test_server.py    # 19 项：真启动服务 + 启动清理 + 路由 + �
   给元素打身份标记，然后验证重绘、拖动、点空白之后**还是同一个元素实例**。
 - `test_ui.py` 注入探针脚本，dispatch 真实 `MouseEvent` 跑完整交互，验证角色推导、
   实时镜像、图生视频联动、帧位上限、右键菜单、工具条、几何关系、布局不塌陷、
-  拖动置顶与导入块数等。
+  拖动置顶、导入块数、保存覆盖的文件句柄绑定等。
 - `test_server.py` 起真实进程：先往三个素材目录各埋一个探针，起来之后断言
   `uploads/` 已被清空而 `media/` `cache/` 原封不动，再验 `KEEP_UPLOADS=1` 开关、
   `/api/config`、未知路由 404、`.env` 与源码被静态白名单挡住。
@@ -388,6 +404,21 @@ wan3画布/
 
 ## 更新日志
 
+### 2026-10-16 · 第一版修订十
+
+加「保存」按钮：**导入已有 JSON 后，点保存原地覆盖那个文件**。
+
+- 顶栏新增「保存」（在导出左边）。绑定文件后按钮点亮，悬停显示「保存并覆盖 xxx.json」
+- 导入从 `<input type="file">` 改为 `showOpenFilePicker()`，
+  这样才能拿到 `FileSystemFileHandle`；保存用 `createWritable()` 覆写同一个句柄
+- 句柄存进 IndexedDB，**刷新页面后保存仍然覆盖同一个文件**
+- 没有句柄时保存走「另存为」；浏览器不支持该 API（Firefox/Safari）时退回下载，
+  按钮提示会写明
+- 兜底：画布空了但文件里本来有块时，保存先弹确认，防止一次手滑把工作流覆盖成空
+- 导入/导出逻辑拆开：`loadWfText()` 只管解析，文件句柄单独一层
+- 测试：`test_ui.py` 106 → 121 项；另有一轮端到端实测验证
+  「导入 → 改 → 保存」写出的确实是完整新内容（3 个块、含修改、文件名不变）
+
 ### 2026-10-16 · 第一版修订九
 
 修「本地堆了一千多个垃圾文件」：
@@ -513,4 +544,4 @@ wan3画布/
 - 导出在顶栏、导入在左栏，无「发布」
 - 零外部依赖前端 + 纯标准库后端
 - 启动自动清空 `uploads/`，`media/` 与 `cache/` 永久保留
-- 五套零费用自测，共 236 项断言
+- 五套零费用自测，共 251 项断言
