@@ -187,6 +187,40 @@ PROBE = r"""
     mouse(nodeEl(img.id), 'mousemove', 200, 200);
     ok('悬停图片块浮出工具条', all('#hud .bar .ctl').length === 5, 'ctl=' + all('#hud .bar .ctl').length);
 
+    /* ---- 9.5 图片比例×分辨率下拉（auto 时隐藏档位） ---- */
+    var ctlNames = all('#hud .bar .ctl').map(function(b){ return b.dataset.ctl; }).join(',');
+    ok('图片工具条控件为 imodel,iratio,count,pextend,download',
+       ctlNames === 'imodel,iratio,count,pextend,download', ctlNames);
+    ok('auto 档不显示分辨率按钮', !el('#hud [data-ctl="ires"]'));
+    click(el('#hud [data-ctl="iratio"]'));
+    var ratioItems = all('#hud .pop .popItem').map(function(b){ return b.dataset.pick; }).join(',');
+    ok('图片比例下拉为 auto+七档', ratioItems === 'auto,16:9,4:3,1:1,3:4,9:16,2:3,3:2', ratioItems);
+    var irOn = all('#hud .pop .popItem').filter(function(b){ return b.querySelector('.ck').textContent === '✓'; });
+    ok('默认选中自动', irOn.length === 1 && irOn[0].dataset.pick === 'auto', irOn.map(function(b){return b.dataset.pick;}).join(','));
+    click(all('#hud .pop .popItem').filter(function(b){ return b.dataset.pick === '16:9'; })[0]);
+    ok('选 16:9 写回 imgParams', W.S.nodes.filter(function(n){return n.id===img.id;})[0].imgParams.ratio === '16:9');
+    mouse(nodeEl(img.id), 'mousemove', 200, 200);
+    ok('选比例后工具条变六个控件', all('#hud .bar .ctl').length === 6, 'ctl=' + all('#hud .bar .ctl').length);
+    ok('工具条比例按钮显示 16:9', el('#hud [data-ctl="iratio"]').textContent.replace('▼','').trim() === '16:9',
+       el('#hud [data-ctl="iratio"]').textContent);
+    click(el('#hud [data-ctl="ires"]'));
+    var resItems = all('#hud .pop .popItem').map(function(b){ return b.dataset.pick; }).join(',');
+    ok('档位下拉只有 1K/2K（不要 1.5K）', resItems === '1K,2K', resItems);
+    click(all('#hud .pop .popItem').filter(function(b){ return b.dataset.pick === '2K'; })[0]);
+    var imgN = W.S.nodes.filter(function(n){return n.id===img.id;})[0];
+    ok('选 2K 写回 imgParams', imgN.imgParams.res === '2K');
+    ok('16:9/2K 提交尺寸为预设 2048x1152', W.imgSizeOf(imgN.imgParams) === '2048x1152', W.imgSizeOf(imgN.imgParams));
+    ok('档位进费用（3.0-pro 2K ¥0.50）', W.costText(imgN) === '¥0.50', W.costText(imgN));
+    // 切回 auto：尺寸按钮消失，提交尺寸变 auto，费用回 1K 档
+    mouse(nodeEl(img.id), 'mousemove', 200, 200);
+    click(el('#hud [data-ctl="iratio"]'));
+    click(all('#hud .pop .popItem').filter(function(b){ return b.dataset.pick === 'auto'; })[0]);
+    mouse(nodeEl(img.id), 'mousemove', 200, 200);
+    ok('切回 auto 后工具条回到五个控件', all('#hud .bar .ctl').length === 5, 'ctl=' + all('#hud .bar .ctl').length);
+    ok('auto 提交尺寸为 auto', W.imgSizeOf(imgN.imgParams) === 'auto', W.imgSizeOf(imgN.imgParams));
+    ok('auto 费用按 1K 估', W.costText(imgN) === '¥0.25', W.costText(imgN));
+    click(document.body);
+
     /* ---- 10. 时长滑杆 ---- */
     mouse(nodeEl(vid.id).querySelector('.nHead'), 'mousemove', 200, 200);
     click(el('#hud [data-ctl="duration"]'));
@@ -383,10 +417,10 @@ PROBE = r"""
     var c1 = W.costText(vx);
     ok('费用随分辨率与时长实时变化', c0 !== c1, c0 + ' -> ' + c1);
     var ix = W.S.nodes.filter(function(n){ return n.type==='image'; }).filter(function(n){ return !n.img; })[0];
-    ix.imgParams.size = '1536x1024';
+    ix.imgParams.ratio = '16:9'; ix.imgParams.res = '2K';
     W.render();
-    // 3.0-pro 的 2K 是 ¥0.50/张（不是旧表里的 ¥0.60）
-    ok('图片块费用随尺寸变化', W.costText(ix) === '¥0.50', W.costText(ix));
+    // 3.0-pro 的 2K 是 ¥0.50/张（不是旧表里的 ¥0.60）；16:9/2K 提交 2048x1152
+    ok('图片块费用随比例与档位变化', W.costText(ix) === '¥0.50', W.costText(ix));
 
     /* ---- 20. 图片块只保留「上传 / 参考图生图 / 风格化转绘」三个入口 ----
        自动（反映不出实际状态）、文生图（直接打字就行）、图生图（与参考图生图同义）都已删。 */
@@ -1168,31 +1202,31 @@ PROBE = r"""
       W.S.nodes.length = 0; W.S.edges.length = 0;
       var i = W.addNode('image', 300, 100);
       i.imgParams.model = 'qwen-image-3.0-pro';
-      i.imgParams.size = '1024x1024'; i.imgParams.n = 1;
+      i.imgParams.ratio = '1:1'; i.imgParams.res = '1K'; i.imgParams.n = 1;
       W.render();
 
       function ct(){ return W.costText(i); }
 
       ok('3.0-pro 1K ×1 = ¥0.25', ct() === '¥0.25', ct());
-      i.imgParams.size = '1536x1024';
+      i.imgParams.ratio = '16:9'; i.imgParams.res = '2K';
       ok('3.0-pro 2K 是 1K 的两倍 = ¥0.50', ct() === '¥0.50', ct());
 
       // 3.0 的 1K/2K 同价 —— 官方表里就是这样，别想当然以为 2K 更贵
       i.imgParams.model = 'qwen-image-3.0';
       ok('3.0 2K = ¥0.18', ct() === '¥0.18', ct());
-      i.imgParams.size = '1024x1024';
+      i.imgParams.ratio = '1:1'; i.imgParams.res = '1K';
       ok('3.0 1K 同为 ¥0.18', ct() === '¥0.18', ct());
 
       // 2.1 系列不区分规格，且最便宜
       i.imgParams.model = 'qwen-image-2.1-turbo';
-      i.imgParams.size = '1536x1024';
+      i.imgParams.ratio = '16:9'; i.imgParams.res = '2K';
       ok('2.1-turbo 不分规格 = ¥0.10', ct() === '¥0.10', ct());
       i.imgParams.model = 'qwen-image-2.1-pro';
       ok('2.1-pro 不分规格 = ¥0.25', ct() === '¥0.25', ct());
 
       // 数量：按张乘
       i.imgParams.model = 'qwen-image-3.0-pro';
-      i.imgParams.size = '1024x1024';
+      i.imgParams.ratio = '1:1'; i.imgParams.res = '1K';
       i.imgParams.n = 4;
       ok('3.0-pro 1K ×4 = ¥1.00', ct() === '¥1.00', ct());
       i.imgParams.n = 1;
@@ -1332,6 +1366,29 @@ PROBE = r"""
          String(((byId('n1') || {}).imgParams || {}).negativePrompt).slice(0, 28));
       ok('老工作流的 negText 也被补上默认值',
          String((byId('n2') || {}).negText).indexOf(HEAD) === 0);
+      // --- 老工作流导入：像素 size 换算成 比例+档位 ---
+      var m1 = byId('n1');
+      ok('老 size=1024x1024 换算成 1:1/1K',
+         m1 && m1.imgParams.ratio === '1:1' && m1.imgParams.res === '1K',
+         m1 ? m1.imgParams.ratio + '/' + m1.imgParams.res : 'null');
+      ok('换算后旧 size 字段被删掉', m1 && m1.imgParams.size === undefined,
+         m1 ? String(m1.imgParams.size) : 'null');
+
+      W.loadWfText(JSON.stringify({ version:2, nodes:[
+        { id:'n1', type:'image', x:0, y:0, imgParams:{ model:'qwen-image-3.0', size:'1536x1024', n:1 } }
+      ], edges:[] }), null, 'old15.json');
+      var m2 = byId('n1');
+      ok('老 size=1536x1024 换算成 3:2/2K（沿用 size_class 契约）',
+         m2 && m2.imgParams.ratio === '3:2' && m2.imgParams.res === '2K',
+         m2 ? m2.imgParams.ratio + '/' + m2.imgParams.res : 'null');
+
+      W.loadWfText(JSON.stringify({ version:2, nodes:[
+        { id:'n1', type:'image', x:0, y:0, imgParams:{ model:'qwen-image-3.0', size:'auto', n:1 } }
+      ], edges:[] }), null, 'oldauto.json');
+      var m3 = byId('n1');
+      ok('老 size=auto 补成默认 auto/1K',
+         m3 && m3.imgParams.ratio === 'auto' && m3.imgParams.res === '1K',
+         m3 ? m3.imgParams.ratio + '/' + m3.imgParams.res : 'null');
 
       W.loadWfText(JSON.stringify({ version:2, nodes:[
         { id:'n1', type:'image', x:0, y:0, imgParams:{ model:'qwen-image-3.0', negativePrompt:'' } }

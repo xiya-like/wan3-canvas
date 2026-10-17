@@ -14,8 +14,8 @@
 
 | 文档 | 内容 |
 |---|---|
-| [`CHANGELOG.md`](CHANGELOG.md) | 变更记录（首版 + 二十四次修订） |
-| [`docs/dev-notes.md`](docs/dev-notes.md) | 踩过的 38 个坑，改代码前先看 |
+| [`CHANGELOG.md`](CHANGELOG.md) | 变更记录（首版 + 二十五次修订） |
+| [`docs/dev-notes.md`](docs/dev-notes.md) | 踩过的 40 个坑，改代码前先看 |
 | [`docs/HANDOVER.md`](docs/HANDOVER.md) | **维护交接**：硬约束、测试坑、终端规则、当前状态、未决事项 |
 
 ---
@@ -175,7 +175,8 @@ placeholder 变成「使用参考内容，例如：@图片1 @视频1 @音频1」
 鼠标**悬停或选中**生成块，块上方浮出一条工具条（可拖动）：
 
 - **视频块**：模型 · 模式 · 时长（滑杆 2–30s）· 分辨率 · 比例（勾选框样式）· 智能配音 · 下载
-- **图片块**：模型 · 尺寸 · 数量 · 增强提示词 · 下载
+- **图片块**：模型 · 比例（自动 / 16:9 / 4:3 / 1:1 / 3:4 / 9:16 / 2:3 / 3:2）· 分辨率（1K / 2K，
+  选「自动」比例时隐藏，由模型按提示词推荐尺寸）· 数量 · 增强提示词 · 下载
 
 块内右下角实时显示**费用预估**（`单价/秒 × 时长`）。
 
@@ -334,10 +335,10 @@ AI-looking artifacts, chaotic composition, blurry or warped text.
 
 五套测试**全部不调用任何生成接口**，可以随时跑：
 ```powershell
-python test_backend.py   # 147 项：请求体结构 + 校验分支 + 素材上传换 url + 分档计价 + 负向提示词门禁 + 启动清理（mock urlopen）
+python test_backend.py   # 166 项：请求体结构 + 校验分支 + 素材上传换 url + 分档计价 + 图片比例×档位预设 + 负向提示词门禁 + 启动清理（mock urlopen）
 python test_upload.py    # 20 项：真实上传 → URL 可达 → 图片解码 → 灯箱（只写本地）
 python test_media.py     #  9 项：重绘/拖动/点空白都不能打断播放中的媒体
-python test_ui.py        # 283 项：无头浏览器 DOM 断言（真实 MouseEvent）
+python test_ui.py        # 301 项：无头浏览器 DOM 断言（真实 MouseEvent）
 python test_server.py    # 19 项：真启动服务 + 启动清理 + 路由 + 静态白名单
 ```
 
@@ -349,7 +350,7 @@ python test_server.py    # 19 项：真启动服务 + 启动清理 + 路由 + �
 > `_shot.png`、`_zshot.png` 和五个 `test_*_out.txt`。
 
 结果分别写到 `test_backend_out.txt` / `test_upload_out.txt` / `test_media_out.txt` /
-`test_ui_out.txt` / `test_server_out.txt`。合计 **478 项断言**。
+`test_ui_out.txt` / `test_server_out.txt`。合计 **515 项断言**。
 
 - `test_backend.py` 拦截 `urllib.request.urlopen`，断言视频用 `input.media` 数组、
   图像用 OpenAI 兼容平铺结构、`n` 是整数、`size` 用字母 x、互斥规则、模式降级、素材分档上限；
@@ -417,7 +418,7 @@ wan3画布/
 ├── test_ui.py         无头浏览器 DOM 断言
 ├── test_server.py     服务集成测试
 ├── docs/
-│   ├── dev-notes.md   开发笔记：踩过的 38 个坑
+│   ├── dev-notes.md   开发笔记：踩过的 40 个坑
 │   └── HANDOVER.md    维护交接（硬约束 / 测试坑 / 当前状态 / 未决事项）
 ├── CHANGELOG.md       变更记录
 ├── LICENSE            MIT
@@ -433,7 +434,7 @@ wan3画布/
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/config` | Key 状态 + 工具条全部元数据（模型、分辨率、比例、尺寸、价格） |
+| GET | `/api/config` | Key 状态 + 工具条全部元数据（模型、分辨率、比例、图片比例×档位预设、价格） |
 | POST | `/api/upload` | 本地图片/视频/音频落盘 `uploads/`，按类型分档校验 |
 | POST | `/api/generate` | 提交视频任务，返回 `task_id` + `effective_mode` |
 | POST | `/api/genimg` | 提交生图任务，结果立即存 `media/` |
@@ -446,7 +447,7 @@ wan3画布/
 
 ## 开发笔记
 
-改代码前踩过的 **38 个坑**都在 [`docs/dev-notes.md`](docs/dev-notes.md)。
+改代码前踩过的 **40 个坑**都在 [`docs/dev-notes.md`](docs/dev-notes.md)。
 每一条都对应一个真实存在过的 bug，比如：
 
 - `render()` 会销毁重建所有节点，`<video>`/`<audio>` 也在内 —— 播放器被重置回 0:00 的元凶
@@ -462,8 +463,10 @@ wan3画布/
 - **视频/音频时长无法本地校验**（Python 标准库不解析），靠 DashScope 返回的错误码兜底。
   要本地校验得引入 ffprobe，会破坏「零依赖」原则
 - **视频编辑/延长、文件/网页生视频**官方支持，第一版不做
-- 图片块工具条细节是按视频块类推的，原站截图没展开过，实测后可能要调
-- 比例列表**不含 21:9**（官方支持，但按之前的需求精简掉了）
+- ~~图片块工具条细节是按视频块类推的，原站截图没展开过，实测后可能要调~~ **已解决**（见
+  [`CHANGELOG.md`](CHANGELOG.md) 修订二十五：按原站「比例 × 分辨率」改成 比例（自动/16:9/4:3/1:1/3:4/9:16/2:3/3:2）
+  + 档位（1K/2K），像素值按百炼文档推荐表给定，「自动」档不传尺寸由模型推荐）
+- 视频比例列表**不含 21:9**（官方支持，但按之前的需求精简掉了）。图片比例则补了 2:3、3:2，共七档固定比例 + 自动
 - **图片块内部布局已对齐原站**：三行入口（图片上传 / 参考图生图 / 风格化转绘），
   连上线即全部收起。详见 [`CHANGELOG.md`](CHANGELOG.md)「第一版修订十三」
 - **图片连入视频块时，本项目仍解析为 t2v**（输入框占位符是「描述你想要生成的视频内容」），

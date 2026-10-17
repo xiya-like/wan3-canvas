@@ -247,13 +247,17 @@ except B.ApiError as e:
 # ---------------------------------------------------------------- 7. config 元数据
 h = FakeHandler({})
 cfg = {"ok": True, "hasKey": True, "videoModels": B.VIDEO_MODELS, "resolutions": B.RESOLUTIONS,
-       "ratios": B.RATIOS, "imageModels": B.IMAGE_MODELS, "imageSizes": B.IMAGE_SIZES,
+       "ratios": B.RATIOS, "imageModels": B.IMAGE_MODELS, "imageRatios": B.IMAGE_RATIOS,
+       "imageResolutions": B.IMAGE_RESOLUTIONS, "imageSizePresets": B.IMAGE_SIZE_PRESETS,
        "imageCost": B.IMAGE_COST, "mediaLimits": B.MEDIA_LIMITS}
 ok("config 含视频模型清单", len(cfg["videoModels"]) == 2)
 ok("config 含三档分辨率", len(cfg["resolutions"]) == 3)
 ok("config 含六个比例且不含 21:9", len(cfg["ratios"]) == 6 and "21:9" not in cfg["ratios"])
 ok("config 含图像模型与参考图上限", any(m["maxRefs"] == 3 for m in cfg["imageModels"]))
 ok("config 含各媒体数量上限", cfg["mediaLimits"]["reference_audio"] == 5)
+ok("config 图像比例为 auto+七档", len(cfg["imageRatios"]) == 8 and cfg["imageRatios"][0] == "auto")
+ok("config 图像分辨率只有 1K/2K（用户定：不要 1.5K）",
+   cfg["imageResolutions"] == ["1K", "2K"])
 
 # ---------------------------------------------------------------- 8. uploads 自动清理
 # 用临时沙箱，绝不碰真实的 uploads/ —— 真实目录里还有用户上传的素材。
@@ -464,6 +468,27 @@ ok("空模型退回默认模型", B.image_unit_cost(None, "1024x1024") == 0.25)
 ok("auto 归到 1K", B.size_class("auto") == "1K" and B.size_class(None) == "1K")
 ok("1024x1536 / 1536x1024 归到 2K", B.size_class("1024x1536") == "2K" and B.size_class("1536x1024") == "2K")
 ok("1440x1440 归到 1K（沿用既有判定）", B.size_class("1440x1440") == "1K")
+
+# 比例×档位预设表：单边必须落在官方 512–2048 内，且 1K 档的值不能被 size_class 归成 2K
+_bad_side = [(r, t, v) for r, row in B.IMAGE_SIZE_PRESETS.items() for t, v in row.items()
+             if not all(512 <= int(x) <= 2048 for x in v.split("x"))]
+ok("全部预设单边都在 512–2048 内", not _bad_side, str(_bad_side))
+_bad_cls = [(r, t, v) for r, row in B.IMAGE_SIZE_PRESETS.items() for t, v in row.items()
+            if B.size_class(v) != t]
+ok("预设档位与 size_class 判定一致（1K 值不含 1536/2048）", not _bad_cls, str(_bad_cls))
+ok("七个比例都配齐 1K/2K 两档",
+   all(t in B.IMAGE_SIZE_PRESETS.get(r, {}) for r in B.IMAGE_RATIOS if r != "auto" for t in B.IMAGE_RESOLUTIONS)
+   and len(B.IMAGE_SIZE_PRESETS) == 7)
+for _r in B.IMAGE_RATIOS:
+    if _r == "auto":
+        continue
+    for _t in B.IMAGE_RESOLUTIONS:
+        try:
+            B.submit_image("x", [], "qwen-image-3.0-pro", B.IMAGE_SIZE_PRESETS[_r][_t], 1,
+                           "", None, True, "direct", False)
+            ok("预设尺寸可提交 (%s/%s)" % (_r, _t), True)
+        except B.ApiError as e:
+            ok("预设尺寸可提交 (%s/%s)" % (_r, _t), False, e.message)
 
 # _handle_genimg 的 estimated_cost = 输出单价 × 张数 + 输入单价 × 参考图数
 _imgdir = tempfile.mkdtemp(prefix="wan3_img_")

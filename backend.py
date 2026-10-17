@@ -91,7 +91,24 @@ IMAGE_MODELS = [
     {"id": "qwen-image-2.1-pro", "name": "Qwen-Image 2.1 Pro", "maxRefs": 10},
     {"id": "qwen-image-2.1-turbo", "name": "Qwen-Image 2.1 Turbo", "maxRefs": 10},
 ]
-IMAGE_SIZES = ["auto", "1024x1024", "1024x1536", "1536x1024", "1440x1440", "1280x720", "720x1280"]
+IMAGE_RATIOS = ["auto", "16:9", "4:3", "1:1", "3:4", "9:16", "2:3", "3:2"]
+IMAGE_RESOLUTIONS = ["1K", "2K"]
+# 比例 × 档位 → 实际提交 API 的 宽x高。前端 DEFAULT_CFG.imageSizePresets 与此一一对应
+# （#35 纪律：改一处必须去看另一处）。
+# 5 个常见比例的 1K 档取百炼文档「各像素范围下的推荐分辨率」表原值；
+# 2K 档里官方推荐的 16:9=2688x1536、4:3=2368x1728 超出 qwen-image 单边 512–2048 限制，
+# 压到长边 2048（2048x1152 / 2048x1536）；2:3、3:2 官方没有推荐值，按同档面积推得。
+# 1K 档所有值刻意不含 "1536"/"2048" 子串 —— size_class() 的判定契约依赖这点，
+# 保证用户在 UI 选 1K 时前后端都归到 1K，不会算错钱。
+IMAGE_SIZE_PRESETS = {
+    "16:9": {"1K": "1696x960",  "2K": "2048x1152"},
+    "9:16": {"1K": "960x1696",  "2K": "1152x2048"},
+    "1:1":  {"1K": "1280x1280", "2K": "2048x2048"},
+    "4:3":  {"1K": "1472x1104", "2K": "2048x1536"},
+    "3:4":  {"1K": "1104x1472", "2K": "1536x2048"},
+    "2:3":  {"1K": "1088x1632", "2K": "1360x2048"},
+    "3:2":  {"1K": "1728x1152", "2K": "2048x1360"},
+}
 
 # 不接受 negative_prompt 的模型（官方文档明确排除的就这两个）。
 # 其余全部支持，所以 UI 上不做任何门禁，也不提示「不支持」。
@@ -491,7 +508,9 @@ class Handler(BaseHTTPRequestHandler):
                     "ratios": RATIOS,
                     "videoCost": VIDEO_COST,
                     "imageModels": IMAGE_MODELS,
-                    "imageSizes": IMAGE_SIZES,
+                    "imageRatios": IMAGE_RATIOS,
+                    "imageResolutions": IMAGE_RESOLUTIONS,
+                    "imageSizePresets": IMAGE_SIZE_PRESETS,
                     "imageCost": IMAGE_COST,
                     "mediaLimits": MEDIA_LIMITS,
                 })

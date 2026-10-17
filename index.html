@@ -295,7 +295,17 @@ const DEFAULT_CFG = {
                 { id:'qwen-image-3.0', name:'Qwen-Image 3.0', maxRefs:3 },
                 { id:'qwen-image-2.1-pro', name:'Qwen-Image 2.1 Pro', maxRefs:10 },
                 { id:'qwen-image-2.1-turbo', name:'Qwen-Image 2.1 Turbo', maxRefs:10 }],
-  imageSizes: ['auto','1024x1024','1024x1536','1536x1024','1440x1440','1280x720','720x1280'],
+  imageRatios: ['auto','16:9','4:3','1:1','3:4','9:16','2:3','3:2'],
+  imageResolutions: ['1K','2K'],
+  // 比例×档位 → 实际提交的 宽x高。与后端 IMAGE_SIZE_PRESETS 一一对应（#35）。
+  // 1K 档刻意避开含 1536/2048 的值，保证 sizeClass() 归到 1K。
+  imageSizePresets: { '16:9':{'1K':'1696x960','2K':'2048x1152'},
+                      '9:16':{'1K':'960x1696','2K':'1152x2048'},
+                      '1:1': {'1K':'1280x1280','2K':'2048x2048'},
+                      '4:3': {'1K':'1472x1104','2K':'2048x1536'},
+                      '3:4': {'1K':'1104x1472','2K':'1536x2048'},
+                      '2:3': {'1K':'1088x1632','2K':'1360x2048'},
+                      '3:2': {'1K':'1728x1152','2K':'2048x1360'} },
   imageCost: { 'qwen-image-3.0-pro':  { out:{ '1K':0.25, '2K':0.50 }, in:0.02 },
                'qwen-image-3.0':      { out:{ '1K':0.18, '2K':0.18 }, in:0.02 },
                'qwen-image-2.1-pro':  { out:{ '1K':0.25, '2K':0.25 }, in:0    },
@@ -702,11 +712,20 @@ function sizeClass(size){
   const s = String(size || '');
   return (s.indexOf('1536') >= 0 || s.indexOf('2048') >= 0) ? '2K' : '1K';
 }
+/* 图片块实际提交的尺寸：ratio × res 查预设表；auto 档不传尺寸，由模型按提示词推荐。
+   预设表与后端 IMAGE_SIZE_PRESETS 一一对应，1K 档的值刻意不含 1536/2048，
+   保证 sizeClass()（=后端 size_class()）归到 1K。 */
+function imgSizeOf(p){
+  if (!p || p.ratio === 'auto') return 'auto';
+  const row = (S.cfg.imageSizePresets || {})[p.ratio];
+  const v = row && row[p.res];
+  return v || 'auto';
+}
 function imageCost(n){
   const p = n.imgParams;
   const row = S.cfg.imageCost[p.model] || S.cfg.imageCost['qwen-image-3.0-pro'] || IMAGE_COST_FALLBACK;
   const out = row.out || {};
-  const cls = sizeClass(p.size);
+  const cls = sizeClass(imgSizeOf(p));
   const per = out[cls] != null ? out[cls] : out['1K'];
   return (per != null ? per : 0.25) * p.n + (row.in || 0) * upstreamImages(n).length;
 }
@@ -736,7 +755,7 @@ function newNode(type, x, y){
   const n = {
     id:nid(), type, x:Math.round(x), y:Math.round(y), name:'',
     text:'', negText:DEFAULT_NEG, img:null, imgPrompt:'',
-    imgParams:{ model:'qwen-image-3.0-pro', size:'1024x1024', n:1, way:'auto', negativePrompt:DEFAULT_NEG, seed:'', promptExtend:true, watermark:false },    vid:null, aud:null, prompt:'',
+    imgParams:{ model:'qwen-image-3.0-pro', ratio:'auto', res:'1K', n:1, way:'auto', negativePrompt:DEFAULT_NEG, seed:'', promptExtend:true, watermark:false },    vid:null, aud:null, prompt:'',
     params:{ model:'wan3.0-video', mode:'fl', duration:5, resolution:'720P', ratio:'adaptive', audio:true },
     showFrames:false, barOff:{ dx:0, dy:0 },
     z:++S.zTop,                   // 新块默认压在最上层
@@ -1531,7 +1550,8 @@ function toolbarControls(n){
   const p = n.imgParams;
   const im = S.cfg.imageModels.find(m => m.id === p.model) || { name:p.model };
   return '<button class="ctl" data-ctl="imodel">' + esc(im.name) + '<span class="caret">▼</span></button>' +
-    '<button class="ctl" data-ctl="size">' + p.size + '<span class="caret">▼</span></button>' +
+    '<button class="ctl" data-ctl="iratio">' + (p.ratio === 'auto' ? '自动' : esc(p.ratio)) + '<span class="caret">▼</span></button>' +
+    (p.ratio === 'auto' ? '' : '<button class="ctl" data-ctl="ires">' + esc(p.res) + '<span class="caret">▼</span></button>') +
     '<button class="ctl" data-ctl="count">×' + p.n + '<span class="caret">▼</span></button>' +
     '<button class="ctl ' + (p.promptExtend ? 'arm' : '') + '" data-ctl="pextend" title="增强提示词"><span class="cdot"></span>增强</button>' +
     '<button class="ctl' + (n.gen.images.length ? '' : ' dis') + '" data-ctl="download" title="下载图片">⤓</button>';
@@ -1561,9 +1581,12 @@ function popHTML(n, ctl){
   if (ctl === 'ratio') return '<div class="popTitle">画面比例</div>' + S.cfg.ratios.map(r =>
       '<button class="popItem' + (n.params.ratio === r ? ' on' : '') + '" data-pick="' + r + '">' +
       '<span class="ck">' + (n.params.ratio === r ? '✓' : '') + '</span>' + (RATIO_LABEL[r] || r) + '</button>').join('');
-  if (ctl === 'size') return '<div class="popTitle">图片尺寸</div>' + S.cfg.imageSizes.map(s =>
-      '<button class="popItem' + (n.imgParams.size === s ? ' on' : '') + '" data-pick="' + s + '">' +
-      '<span class="ck">' + (n.imgParams.size === s ? '✓' : '') + '</span>' + s + '</button>').join('');
+  if (ctl === 'iratio') return '<div class="popTitle">图片比例</div>' + S.cfg.imageRatios.map(r =>
+      '<button class="popItem' + (n.imgParams.ratio === r ? ' on' : '') + '" data-pick="' + r + '">' +
+      '<span class="ck">' + (n.imgParams.ratio === r ? '✓' : '') + '</span>' + (r === 'auto' ? '自动（模型推荐）' : r) + '</button>').join('');
+  if (ctl === 'ires') return '<div class="popTitle">分辨率</div>' + S.cfg.imageResolutions.map(r =>
+      '<button class="popItem' + (n.imgParams.res === r ? ' on' : '') + '" data-pick="' + r + '">' +
+      '<span class="ck">' + (n.imgParams.res === r ? '✓' : '') + '</span>' + r + '</button>').join('');
   if (ctl === 'count') return '<div class="popTitle">生成数量</div>' + [1,2,3,4,5,6].map(v =>
       '<button class="popItem' + (n.imgParams.n === v ? ' on' : '') + '" data-pick="' + v + '">' +
       '<span class="ck">' + (n.imgParams.n === v ? '✓' : '') + '</span>×' + v + '</button>').join('');
@@ -1580,7 +1603,8 @@ function applyPick(n, ctl, val){
   else if (ctl === 'duration') n.params.duration = Number(val);
   else if (ctl === 'res') n.params.resolution = val;
   else if (ctl === 'ratio') n.params.ratio = val;
-  else if (ctl === 'size') n.imgParams.size = val;
+  else if (ctl === 'iratio') n.imgParams.ratio = val;
+  else if (ctl === 'ires') n.imgParams.res = val;
   else if (ctl === 'count') n.imgParams.n = Number(val);
 }
 function downloadNode(n){
@@ -2103,7 +2127,7 @@ async function runImage(n){
   if (!refs.length && !prompt.trim()) throw new Error('提示词为空');
 
   const body = {
-    prompt, model:p.model, size:p.size, n:p.n,
+    prompt, model:p.model, size:imgSizeOf(p), n:p.n,
     negativePrompt:neg || undefined, seed:p.seed || undefined,
     promptExtend:p.promptExtend, watermark:p.watermark,
     promptExtendMode: refs.length ? 'direct' : 'agent',
@@ -2114,7 +2138,7 @@ async function runImage(n){
     throw new Error(p.model + ' 最多 ' + maxRefs + ' 张参考图，当前 ' + refs.length + ' 张，请断开多余连线');
   }
 
-  L('▶ ' + nodeName(n) + ' 提交生图：' + p.model + ' · ' + p.size + ' ×' + p.n +
+  L('▶ ' + nodeName(n) + ' 提交生图：' + p.model + ' · ' + (p.ratio === 'auto' ? '自动尺寸' : p.ratio + ' / ' + p.res) + ' ×' + p.n +
     ' · ' + (refs.length ? refs.length + ' 张参考图' : '文生图') +
     (neg.trim() ? ' · 负向 ' + neg.length + ' 字' : ''), 'run');
   const g = await post('/api/genimg', body);
@@ -2328,6 +2352,21 @@ async function importWfPicker(){
     toast('打开失败：' + (e.message || e), 'err');
   }
 }
+/* 老工作流的 imgParams.size（像素串或 auto）换算成新的 ratio+res。
+   必须在 loadWfText 补默认值之前调用——顺序反了，ratio/res 先被填成 auto/1K，
+   用户旧的尺寸选择就丢了。档位沿用 sizeClass 的既有契约（含 1536/2048 算 2K），
+   换算后实际提交值会跳到预设表里的近似尺寸（如 1024x1536 → 2:3/2K → 1360x2048）。 */
+function legacyImgSpec(size){
+  const m = /(\d+)\s*[xX*]\s*(\d+)/.exec(String(size || ''));
+  if (!m) return null;
+  const w = Number(m[1]), h = Number(m[2]);
+  if (!(w > 0 && h > 0)) return null;
+  const r = w / h;
+  let best = '1:1', bd = Infinity;
+  [['16:9',16/9],['3:2',3/2],['4:3',4/3],['1:1',1],['3:4',3/4],['2:3',2/3],['9:16',9/16]]
+    .forEach(x => { const d = Math.abs(r - x[1]); if (d < bd){ bd = d; best = x[0]; } });
+  return { ratio: best, res: sizeClass(size) };
+}
 function loadWfText(text, handle, name){
   try {
     const j = JSON.parse(text);
@@ -2339,6 +2378,11 @@ function loadWfText(text, handle, name){
     const base = newNode('text', 0, 0);
     S.nodes.pop();
     S.nodes.forEach(n => {
+      if (n.imgParams && n.imgParams.ratio === undefined){
+        const lg = legacyImgSpec(n.imgParams.size);
+        if (lg){ n.imgParams.ratio = lg.ratio; n.imgParams.res = lg.res; }
+        delete n.imgParams.size;
+      }
       Object.keys(base).forEach(k => {
         if (n[k] === undefined) n[k] = clone(base[k]);   // clone：否则多个块共用同一个参数对象
       });
@@ -2600,7 +2644,7 @@ function boot(){
     .then(j => {
       S.backend = true;
       S.hasKey = !!j.hasKey;
-      ['videoModels','resolutions','ratios','videoCost','imageModels','imageSizes','imageCost'].forEach(k => {
+      ['videoModels','resolutions','ratios','videoCost','imageModels','imageRatios','imageResolutions','imageSizePresets','imageCost'].forEach(k => {
         if (j[k]) S.cfg[k] = j[k];
       });
       render();
@@ -2620,6 +2664,7 @@ function boot(){
   window.__wf = {
     S, addNode, resolveVideo, canConnect, nodePorts, role, mirrorText, imgTexts, textNegOn, topo, isGen,
     imgWay, canGenerate, costText, upsOf, edgeOf, upstreamImages, upstreamMedia,
+    imgSizeOf, sizeClass, legacyImgSpec,
     addEdge, render, softSync, delNode, delEdge, copyNode, duplicateNode,
     uploadFiles, fillSlot, mediaHTML, bringToFront,
     loadWfText, wfText, saveWf, setCurrentFile, FSA_OK, renderTop, renderHud,
