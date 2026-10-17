@@ -385,7 +385,8 @@ PROBE = r"""
     var ix = W.S.nodes.filter(function(n){ return n.type==='image'; }).filter(function(n){ return !n.img; })[0];
     ix.imgParams.size = '1536x1024';
     W.render();
-    ok('图片块费用随尺寸变化', W.costText(ix) === '¥0.60', W.costText(ix));
+    // 3.0-pro 的 2K 是 ¥0.50/张（不是旧表里的 ¥0.60）
+    ok('图片块费用随尺寸变化', W.costText(ix) === '¥0.50', W.costText(ix));
 
     /* ---- 20. 图片块只保留「上传 / 参考图生图 / 风格化转绘」三个入口 ----
        自动（反映不出实际状态）、文生图（直接打字就行）、图生图（与参考图生图同义）都已删。 */
@@ -1159,6 +1160,69 @@ PROBE = r"""
       v.params.model = 'wan9.9-unknown';
       var fb = W.cost().video;
       ok('未知模型退回标准版而不是 0', Math.abs(fb - 4.20) < 1e-9, fb);
+    })();
+
+    /* ---- 35. 图片费用按「模型 × 输出规格 + 参考图输入」计价 ----
+       旧表只有 1K 0.2 / 2K 0.6 且不看模型，四个模型全按同一价算。 */
+    (function(){
+      W.S.nodes.length = 0; W.S.edges.length = 0;
+      var i = W.addNode('image', 300, 100);
+      i.imgParams.model = 'qwen-image-3.0-pro';
+      i.imgParams.size = '1024x1024'; i.imgParams.n = 1;
+      W.render();
+
+      function ct(){ return W.costText(i); }
+
+      ok('3.0-pro 1K ×1 = ¥0.25', ct() === '¥0.25', ct());
+      i.imgParams.size = '1536x1024';
+      ok('3.0-pro 2K 是 1K 的两倍 = ¥0.50', ct() === '¥0.50', ct());
+
+      // 3.0 的 1K/2K 同价 —— 官方表里就是这样，别想当然以为 2K 更贵
+      i.imgParams.model = 'qwen-image-3.0';
+      ok('3.0 2K = ¥0.18', ct() === '¥0.18', ct());
+      i.imgParams.size = '1024x1024';
+      ok('3.0 1K 同为 ¥0.18', ct() === '¥0.18', ct());
+
+      // 2.1 系列不区分规格，且最便宜
+      i.imgParams.model = 'qwen-image-2.1-turbo';
+      i.imgParams.size = '1536x1024';
+      ok('2.1-turbo 不分规格 = ¥0.10', ct() === '¥0.10', ct());
+      i.imgParams.model = 'qwen-image-2.1-pro';
+      ok('2.1-pro 不分规格 = ¥0.25', ct() === '¥0.25', ct());
+
+      // 数量：按张乘
+      i.imgParams.model = 'qwen-image-3.0-pro';
+      i.imgParams.size = '1024x1024';
+      i.imgParams.n = 4;
+      ok('3.0-pro 1K ×4 = ¥1.00', ct() === '¥1.00', ct());
+      i.imgParams.n = 1;
+
+      // 参考图输入费：3.0 系列每张 0.02，2.1 系列不收
+      var r1 = W.addNode('image', 40, 300);
+      r1.img = { url:'/media/r1.png', name:'r1.png' };
+      W.addEdge(r1.id, i.id, 'in');
+      W.render();
+      ok('3.0-pro +1 张参考图 = ¥0.27（+0.02 输入费）', ct() === '¥0.27', ct());
+
+      var r2 = W.addNode('image', 40, 600);
+      r2.img = { url:'/media/r2.png', name:'r2.png' };
+      W.addEdge(r2.id, i.id, 'in');
+      W.render();
+      ok('3.0-pro +2 张参考图 = ¥0.29', ct() === '¥0.29', ct());
+
+      // 2.1-turbo 有 10 张上限，插满 3 张看输入费确实为 0
+      i.imgParams.model = 'qwen-image-2.1-turbo';
+      W.render();
+      ok('2.1-turbo 参考图不收输入费（仍 ¥0.10）', ct() === '¥0.10', ct());
+
+      // 断开后费用回落到 ¥0.10（两条边都要断，2.1 不收输入费所以只有一张时看不出差别）
+      W.S.edges.filter(function(e){ return e.to === i.id; }).forEach(function(e){ W.delEdge(e.id); });
+      W.render();
+      ok('断开全部参考图后费用回落', ct() === '¥0.10', ct());
+
+      // 认不出的模型退回默认模型，不能变 0 或 NaN
+      i.imgParams.model = 'qwen-image-9.9';
+      ok('未知模型退回默认模型而不是 0', ct() === '¥0.25', ct());
     })();
 
   } catch (err){

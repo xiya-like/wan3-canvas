@@ -92,7 +92,42 @@ IMAGE_MODELS = [
     {"id": "qwen-image-2.1-turbo", "name": "Qwen-Image 2.1 Turbo", "maxRefs": 10},
 ]
 IMAGE_SIZES = ["auto", "1024x1024", "1024x1536", "1536x1024", "1440x1440", "1280x720", "720x1280"]
-IMAGE_COST = {"1K": 0.2, "2K": 0.6}
+
+# 图片按「模型 × 输出规格」计价，单位：元/张。in 是每张参考图的输入价。
+# 取自百炼控制台价格表 2026-10-17。两个反直觉的点：
+#   · qwen-image-3.0 的 1K 与 2K 同价（0.18），只有 3.0-pro 的 2K 翻倍
+#   · 3.0 系列按输入张数收费（每张 0.02），2.1 系列不收输入费
+DEFAULT_IMAGE_MODEL = "qwen-image-3.0-pro"
+IMAGE_COST = {
+    "qwen-image-3.0-pro":   {"out": {"1K": 0.25, "2K": 0.50}, "in": 0.02},
+    "qwen-image-3.0":       {"out": {"1K": 0.18, "2K": 0.18}, "in": 0.02},
+    "qwen-image-2.1-pro":   {"out": {"1K": 0.25, "2K": 0.25}, "in": 0.0},
+    "qwen-image-2.1-turbo": {"out": {"1K": 0.10, "2K": 0.10}, "in": 0.0},
+}
+
+
+def size_class(size):
+    """把 1024x1536 之类的尺寸归到价格表的 1K / 2K 两档：含 1536 或 2048 算 2K。
+    判定必须与前端 imageCost() 里的写法一致，两边算得不一样就会少报。"""
+    s = str(size or "")
+    return "2K" if ("1536" in s or "2048" in s) else "1K"
+
+
+def image_row(model):
+    """模型认不出就退回默认模型 —— 宁可估算也不让前端拿到 0。"""
+    return IMAGE_COST.get(model) or IMAGE_COST[DEFAULT_IMAGE_MODEL]
+
+
+def image_unit_cost(model, size):
+    """每张输出图的单价。"""
+    out = image_row(model)["out"]
+    return out.get(size_class(size), out["1K"])
+
+
+def image_ref_cost(model):
+    """每张参考图的输入单价（2.1 系列为 0，不收输入费）。"""
+    return image_row(model)["in"]
+
 
 # 视频按「模型 × 分辨率」两档计价 —— Prime 优速版单价是标准版的 2 倍以上，
 # 合成一张表会把费用显示少报一半多。单位：元/秒（华东以外地域以控制台为准）。
@@ -671,17 +706,23 @@ class Handler(BaseHTTPRequestHandler):
         )
         # 官方链接 24 小时过期，必须立刻落盘
         saved = [p for p in (self._cache_remote(u, MEDIA_DIR, ".png") for u in remote) if p]
-        size_label = "2K" if any(
-            v and "1536" in str(v) or (v and "2048" in str(v)) for v in [b.get("size")]
-        ) else "1K"
+        # 估价按「提交的 n」算，不是 len(saved)：图已经生成出来并计费了，
+        # 后面下载落盘失败不影响扣费，用 len(saved) 会把费用报低。
+        # 输出按张算，参考图另按张收输入费（2.1 系列为 0）
+        try:
+            want = max(1, int(b.get("n", 1)))
+        except (TypeError, ValueError):
+            want = 1
+        est = image_unit_cost(model, b.get("size")) * want + image_ref_cost(model) * len(refs)
         return self._send(200, {
             "ok": True,
             "images": saved,
             "count": len(saved),
             "model": model,
+            "size_class": size_class(b.get("size")),
             "effective_prompt_extend_mode": eff_mode,
             "note": "图生图不支持 agent 增强，已自动降级为 direct" if (refs and (b.get("promptExtendMode") == "agent")) else "",
-            "estimated_cost": round(IMAGE_COST.get(size_label, 0.2) * len(saved), 2),
+            "estimated_cost": round(est, 2),
         })
 
     # 只放行 index.html 和三个素材目录，.env / .py 一律不供

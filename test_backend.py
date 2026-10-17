@@ -422,6 +422,70 @@ try:
 finally:
     shutil.rmtree(_costdir, ignore_errors=True)
 
+# ---------------------------------------------------------------- 11. 图片按模型 × 规格计价
+# 取自百炼控制台价格表 2026-10-17。两个反直觉的点：
+#   3.0 的 1K/2K 同价；只有 3.0-pro 的 2K 翻倍；3.0 系列按参考图张数收输入费，2.1 不收。
+ok("图片单价表按模型分组", isinstance(B.IMAGE_COST.get("qwen-image-3.0-pro"), dict)
+   and "out" in B.IMAGE_COST.get("qwen-image-3.0-pro", {}))
+ok("3.0-pro 1K 单价 0.25", B.image_unit_cost("qwen-image-3.0-pro", "1024x1024") == 0.25)
+ok("3.0-pro 2K 单价 0.50（翻倍）", B.image_unit_cost("qwen-image-3.0-pro", "1536x1024") == 0.50)
+ok("3.0 1K 单价 0.18", B.image_unit_cost("qwen-image-3.0", "1024x1024") == 0.18)
+ok("3.0 的 2K 与 1K 同价", B.image_unit_cost("qwen-image-3.0", "1536x1024") == B.image_unit_cost("qwen-image-3.0", "1024x1024"))
+ok("2.1-pro 不分规格 0.25", B.image_unit_cost("qwen-image-2.1-pro", "1536x1024") == 0.25
+   and B.image_unit_cost("qwen-image-2.1-pro", "1024x1024") == 0.25)
+ok("2.1-turbo 单价 0.10", B.image_unit_cost("qwen-image-2.1-turbo", "1536x1024") == 0.10)
+ok("turbo 是四个模型里最便宜的", B.image_unit_cost("qwen-image-2.1-turbo", "1024x1024")
+   < min(B.image_unit_cost(m, "1024x1024") for m in B.IMAGE_COST if m != "qwen-image-2.1-turbo"))
+
+ok("3.0-pro 参考图输入费 0.02/张", B.image_ref_cost("qwen-image-3.0-pro") == 0.02)
+ok("3.0 参考图输入费 0.02/张", B.image_ref_cost("qwen-image-3.0") == 0.02)
+ok("2.1 系列不收参考图输入费", B.image_ref_cost("qwen-image-2.1-pro") == 0 and B.image_ref_cost("qwen-image-2.1-turbo") == 0)
+ok("未知模型退回默认模型", B.image_unit_cost("qwen-image-9.9", "1024x1024") == 0.25)
+ok("空模型退回默认模型", B.image_unit_cost(None, "1024x1024") == 0.25)
+ok("auto 归到 1K", B.size_class("auto") == "1K" and B.size_class(None) == "1K")
+ok("1024x1536 / 1536x1024 归到 2K", B.size_class("1024x1536") == "2K" and B.size_class("1536x1024") == "2K")
+ok("1440x1440 归到 1K（沿用既有判定）", B.size_class("1440x1440") == "1K")
+
+# _handle_genimg 的 estimated_cost = 输出单价 × 张数 + 输入单价 × 参考图数
+_imgdir = tempfile.mkdtemp(prefix="wan3_img_")
+try:
+    _ip = os.path.join(_imgdir, "i.png")
+    with open(_ip, "wb") as _f:
+        _f.write(b"\x89PNG\r\n\x1a\n" + b"0" * 16)
+
+    def _img_est(model, size="1024x1024", n=1, refs=0):
+        body = {"prompt": "一只猫", "model": model, "size": size, "n": n,
+                "refs": [_ip] * refs}
+        h = FakeHandler(body)
+        h._handle_genimg()
+        return h.captured[1]
+
+    r = _img_est("qwen-image-3.0-pro")
+    ok("3.0-pro 1K ×1 估价 ¥0.25", r["estimated_cost"] == 0.25, r["estimated_cost"])
+    ok("回包带 size_class", r.get("size_class") == "1K", r.get("size_class"))
+
+    r = _img_est("qwen-image-3.0-pro", size="1536x1024", n=2)
+    ok("3.0-pro 2K ×2 估价 ¥1.00", r["estimated_cost"] == 1.0, r["estimated_cost"])
+    ok("2K 回包 size_class=2K", r.get("size_class") == "2K")
+
+    r = _img_est("qwen-image-3.0-pro", refs=3)
+    ok("3.0-pro 1K +3 张参考图 = ¥0.31（3×0.02 输入费）", r["estimated_cost"] == 0.31, r["estimated_cost"])
+
+    r = _img_est("qwen-image-2.1-turbo", size="1536x1024", refs=5)
+    ok("2.1-turbo 2K +5 张参考图仍 ¥0.10（不收输入费）", r["estimated_cost"] == 0.1, r["estimated_cost"])
+
+    r = _img_est("qwen-image-3.0")
+    ok("3.0 1K ×1 = ¥0.18", r["estimated_cost"] == 0.18, r["estimated_cost"])
+
+    # 估价按「提交的 n」而不是本地落盘成功的张数：图已经生成出来并计费了，
+    # 后面下载落盘失败不影响扣费。mock 的 URL 拉不下来，saved 恒为空，正好验这条。
+    r = _img_est("qwen-image-2.1-turbo", size="1536x1024", n=5)
+    ok("估价按提交的 n（落盘全失败仍按 5 张算）", r["estimated_cost"] == 0.5, r["estimated_cost"])
+    ok("落盘全失败时 count 仍如实报 0", r["count"] == 0, r["count"])
+    ok("估值绝不为 0", r["estimated_cost"] > 0, r["estimated_cost"])
+finally:
+    shutil.rmtree(_imgdir, ignore_errors=True)
+
 # ---------------------------------------------------------------- 输出
 npass = sum(1 for l in R if l.startswith("PASS"))
 out = "\n".join(R) + "\n\n===== %d/%d passed =====\n" % (npass, len(R))

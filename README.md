@@ -15,7 +15,7 @@
 | 文档 | 内容 |
 |---|---|
 | [`CHANGELOG.md`](CHANGELOG.md) | 21 条变更记录（首版 + 二十次修订） |
-| [`docs/dev-notes.md`](docs/dev-notes.md) | 踩过的 34 个坑，改代码前先看 |
+| [`docs/dev-notes.md`](docs/dev-notes.md) | 踩过的 36 个坑，改代码前先看 |
 
 ---
 
@@ -268,6 +268,26 @@ placeholder 变成「使用参考内容，例如：@图片1 @视频1 @音频1」
 
 ## 成本
 
+### 图片（按张）
+
+图片按张计费，**四个模型单价不同，3.0 系列还要按参考图张数另收输入费**：
+
+| 模型 | 输出 1K | 输出 2K | 参考图输入 |
+|---|---|---|---|
+| Qwen-Image 3.0 Pro | ¥0.25 | ¥0.50 | ¥0.02/张 |
+| Qwen-Image 3.0 | ¥0.18 | ¥0.18 | ¥0.02/张 |
+| Qwen-Image 2.1 Pro | ¥0.25 | ¥0.25 | 不收 |
+| Qwen-Image 2.1 Turbo | ¥0.10 | ¥0.10 | 不收 |
+
+「输出」按 `单价 × 数量` 算，「参考图输入」按 `0.02 × 连进来的图数` 算——
+所以 3.0-pro 带 10 张参考图会比 2.1-pro 贵出 ¥0.20。
+
+> 两处反直觉，别想当然：**3.0 的 1K 和 2K 同价**（都是 ¥0.18），只有 3.0-pro 的 2K 翻倍；
+> **只有 3.0 系列收参考图输入费**，2.1 系列不收。
+> 只想便宜又不在乎质量的话，`2.1-turbo` 是 ¥0.10/张，比默认的 `3.0-pro` 便宜六成。
+
+### 视频（按秒）
+
 视频按秒计费，**两个模型单价不同，别拿标准版的价去估 Prime**：
 
 | 模型 | 分辨率 | 单价/秒 | 5 秒示例 |
@@ -284,7 +304,7 @@ placeholder 变成「使用参考内容，例如：@图片1 @视频1 @音频1」
 > 两个模型在**北京地域共享 30 秒免费额度**（输入+输出合计秒数），
 > 百炼控制台里的「免费额度用完即停」开着的话，额度耗尽会直接返回 403 而**不会扣费**。
 
-**失败不计费。** 块内「预计 ¥」会在你改模型、改分辨率、改时长时实时变，跑之前先看一眼。
+**失败不计费。** 块内「预计 ¥」会在你改模型、改规格、改数量、改时长时实时变，跑之前先看一眼。
 
 ---
 
@@ -292,10 +312,10 @@ placeholder 变成「使用参考内容，例如：@图片1 @视频1 @音频1」
 
 五套测试**全部不调用任何生成接口**，可以随时跑：
 ```powershell
-python test_backend.py   # 116 项：请求体结构 + 校验分支 + 素材上传换 url + 分模型计价 + 启动清理（mock urlopen）
+python test_backend.py   # 142 项：请求体结构 + 校验分支 + 素材上传换 url + 视频/图片分档计价 + 启动清理（mock urlopen）
 python test_upload.py    # 20 项：真实上传 → URL 可达 → 图片解码 → 灯箱（只写本地）
 python test_media.py     #  9 项：重绘/拖动/点空白都不能打断播放中的媒体
-python test_ui.py        # 239 项：无头浏览器 DOM 断言（真实 MouseEvent）
+python test_ui.py        # 251 项：无头浏览器 DOM 断言（真实 MouseEvent）
 python test_server.py    # 19 项：真启动服务 + 启动清理 + 路由 + 静态白名单
 ```
 
@@ -307,12 +327,13 @@ python test_server.py    # 19 项：真启动服务 + 启动清理 + 路由 + �
 > `_shot.png`、`_zshot.png` 和五个 `test_*_out.txt`。
 
 结果分别写到 `test_backend_out.txt` / `test_upload_out.txt` / `test_media_out.txt` /
-`test_ui_out.txt` / `test_server_out.txt`。合计 **403 项断言**。
+`test_ui_out.txt` / `test_server_out.txt`。合计 **441 项断言**。
 
 - `test_backend.py` 拦截 `urllib.request.urlopen`，断言视频用 `input.media` 数组、
   图像用 OpenAI 兼容平铺结构、`n` 是整数、`size` 用字母 x、互斥规则、模式降级、素材分档上限；
   素材上传按官方现行结构 mock（只回 `file_id`，要再查一次才拿得到 url）；
-  费用按「模型 × 分辨率」两档分别断言（含 `WAN_MODEL` 与前端传值不一致的情形）；
+  费用按「模型 × 规格」分别断言视频与图片两套（含 `WAN_MODEL` 与前端传值不一致、
+  参考图输入费、估价按提交的 `n` 而非本地落盘张数的情形）；
   另在**临时沙箱**里验证 `purge_uploads()` 的文件数/字节数/幂等/跳过非空子目录——绝不碰真实 `uploads/`。
 - `test_upload.py` 在浏览器里用 canvas 造一张真 PNG，走完整上传链路，再检查
   返回的素材 URL 带没带 `/uploads/` 前缀、图片能不能解码、块里的大图元素尺寸对不对、灯箱能不能开关。
@@ -374,7 +395,7 @@ wan3画布/
 ├── test_ui.py         无头浏览器 DOM 断言
 ├── test_server.py     服务集成测试
 ├── docs/
-│   └── dev-notes.md   开发笔记：踩过的 34 个坑
+│   └── dev-notes.md   开发笔记：踩过的 36 个坑
 ├── CHANGELOG.md       变更记录
 ├── LICENSE            MIT
 ├── .env.example       Key 模板
@@ -402,7 +423,7 @@ wan3画布/
 
 ## 开发笔记
 
-改代码前踩过的 **34 个坑**都在 [`docs/dev-notes.md`](docs/dev-notes.md)。
+改代码前踩过的 **36 个坑**都在 [`docs/dev-notes.md`](docs/dev-notes.md)。
 每一条都对应一个真实存在过的 bug，比如：
 
 - `render()` 会销毁重建所有节点，`<video>`/`<audio>` 也在内 —— 播放器被重置回 0:00 的元凶
