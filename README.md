@@ -14,8 +14,9 @@
 
 | 文档 | 内容 |
 |---|---|
-| [`CHANGELOG.md`](CHANGELOG.md) | 21 条变更记录（首版 + 二十次修订） |
+| [`CHANGELOG.md`](CHANGELOG.md) | 变更记录（首版 + 二十四次修订） |
 | [`docs/dev-notes.md`](docs/dev-notes.md) | 踩过的 38 个坑，改代码前先看 |
+| [`docs/HANDOVER.md`](docs/HANDOVER.md) | **维护交接**：硬约束、测试坑、终端规则、当前状态、未决事项 |
 
 ---
 
@@ -416,7 +417,8 @@ wan3画布/
 ├── test_ui.py         无头浏览器 DOM 断言
 ├── test_server.py     服务集成测试
 ├── docs/
-│   └── dev-notes.md   开发笔记：踩过的 38 个坑
+│   ├── dev-notes.md   开发笔记：踩过的 38 个坑
+│   └── HANDOVER.md    维护交接（硬约束 / 测试坑 / 当前状态 / 未决事项）
 ├── CHANGELOG.md       变更记录
 ├── LICENSE            MIT
 ├── .env.example       Key 模板
