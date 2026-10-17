@@ -1,6 +1,6 @@
 # wan3-canvas 维护交接
 
-> 给接手维护的人。**先读这页，再读 `docs/dev-notes.md`（38 条踩坑记录）**，
+> 给接手维护的人。**先读这页，再读 `docs/dev-notes.md`（40 条踩坑记录）**，
 > 改代码前必看。其它文档（README / CHANGELOG）按需查。
 
 ## 1. 项目
@@ -20,6 +20,7 @@
    *例外*：文件上传接口官方免费，可用于验证；`GET /api/v1/files/{id}` 是只读的。
 2. **前端零外部依赖**（原生 JS + SVG，无框架无 CDN）；**后端仅 Python 标准库**。
 3. 改代码必须同步更新 `README.md` / `CHANGELOG.md` / `docs/dev-notes.md`。
+   **写入一律用 `edit` 追加/定点替换，禁止整文件重写**（CHANGELOG 571 行，重写一次白烧几千 token）。
 4. 公开仓库，`LICENSE` 为 MIT。
 
 ## 3. 文件地图
@@ -29,23 +30,48 @@
 | `backend.py` | 全部后端。纯标准库 HTTP 服务 + DashScope 代理 |
 | `index.html` | 全部前端。约 110KB，零依赖 |
 | `test_*.py` | 五套自测，见下 |
-| `docs/dev-notes.md` | **38 条踩坑记录，改代码前必读** |
+| `docs/dev-notes.md` | **40 条踩坑记录，改代码前必读** |
 | `CHANGELOG.md` | 变更记录（修订一～二十四） |
 | `README.md` | 用户文档 |
 
 后端：价格表 `VIDEO_COST` / `IMAGE_COST` 集中在文件头；模型与规格上限同处。
 前端：`role(n)` 推导块角色 → `bodyHTML(n)` 渲染 → `mirrorText(n)` 实时镜像上游文本。
 
+### 行号锚点（2026-10-17 标定；代码变动后会漂移，漂移了就重新 grep）
+
+**禁止整文件读 `index.html`（114K 字符）和 `test_ui.py`（67K）**。
+先 `grep` 定位，再用 `read` 的 `offset`/`limit` 只读目标区间（一般 ±50 行足够）。
+
+| index.html | 行 | backend.py | 行 |
+|---|---|---|---|
+| `DEFAULT_NEG` 常量 | 324 | `IMAGE_COST` / `size_class()` | 120 / 128 |
+| `role(n)` | 368 | `VIDEO_COST` | 155 |
+| `mirrorText(n)` | 447 | `ds_request()`（请求核心） | 196 |
+| `newNode()`（imgParams 默认值 758） | 754 | `upload_to_dashscope()` | 256 |
+| `bodyHTML(n)` | 1055 | `submit_video()` / `submit_image()` | 324 / 359 |
+| `_rendering` 闸 + `render()` | 1297 | `query_task()` | 438 |
+| `exportWf()` / `importWf()` | 2250 / 2330 | `Handler` 路由 | 444 |
+| | | `purge_uploads()` / `main()` | 774 / 801 |
+
 ## 4. 测试
 
 ```powershell
-python test_backend.py   # 147  mock urlopen，断请求体与门禁
+python test_backend.py   # 166  mock urlopen，断请求体与门禁
 python test_upload.py    #  20  真上传链路（只写本地）
 python test_media.py     #   9  播放不被打断
-python test_ui.py        # 283  无头浏览器 DOM 断言
+python test_ui.py        # 301  无头浏览器 DOM 断言
 python test_server.py    #  19  真启动服务
 ```
-合计 **478 项**，全绿。改完必须全跑一遍。
+合计 **515 项**，全绿。改完必须全跑一遍。
+
+### 跑法（省 token，必守）
+
+- 五套输出冗长，**别让输出直接进对话**：写个 `.ps1` 顺序跑五套，
+  `*> $null` 吞掉输出，最后只打印每套 exit code 一行（如 `test_ui: 0`）。
+- **全绿**：只回报一行结论，不贴任何测试输出。
+- **有红**：只读失败那套输出的**尾部**（`Get-Content -Tail 50`）定位，不要整段贴回来。
+- 注意下节红线依旧有效：绝不能用 `> test_*_out.txt` 重定向（管道占文件会 PermissionError），
+  吞输出用 `*> $null`，不写文件。
 
 ### 测试的坑（这几条踩过很多次，见 dev-notes）
 
