@@ -137,6 +137,11 @@ textarea.prompt{width:100%;min-height:62px;resize:vertical;background:#17171a;bo
 textarea.prompt:focus{border-color:var(--ac)}
 textarea.prompt.mirror{background:#1b1b1f;color:var(--tx3);border-style:dashed;cursor:not-allowed}
 textarea.prompt:disabled{opacity:.6}
+/* 负向提示词那一截：上面一条小标签，下面一个比提示词矮的框。
+   灰底虚线沿用 .mirror，被上游镜像时看起来是「只读、不是这里编辑的」。 */
+.negWrap{display:flex;flex-direction:column;gap:4px}
+.negLb{font-size:10.5px;color:var(--tx3);letter-spacing:.2px}
+textarea.prompt.neg{min-height:42px;font-size:11.5px;color:var(--tx2)}
 /* 多参考模式：原站在输入框左上角先摆一个「输入」标签和一个 @ 徽章，
    placeholder 跟在它们后面。见截图 2026-10-16 220957。 */
 .promptBox{position:relative}
@@ -304,6 +309,10 @@ const ACCEPT = { image:'image/jpeg,image/png,image/webp,image/bmp',
 const LIMIT_MB = { image:20, video:100, audio:15 };
 const STYLE_SUFFIX = '，保持原图构图与主体特征，转换为高质量插画风格，细节精致';
 
+/* 负向提示词默认值。官方示例给的就是这句，新建块直接填好，省得每次手输。
+   qwen-image 全系列都支持（官方只排除了 wan2.7-image-pro / wan2.7-image）。 */
+const DEFAULT_NEG = 'Low resolution, low quality, distorted limbs, malformed fingers, oversaturated colors, wax-figure appearance, lack of facial detail, excessive smoothness, AI-looking artifacts, chaotic composition, blurry or warped text.';
+
 const PALETTE = [
   { type:'text', label:'文本块', ico:'T', color:'#3fb950', key:'T', desc:'唯一文本源，输入提示词' },
   { type:'image', label:'图片块', ico:'I', color:'#e8933a', key:'I', desc:'空则生图，有图则供源' },
@@ -408,11 +417,29 @@ function resolveVideo(n){
   return { mode:'t2v', note:'' };
 }
 
+/** 文本块是否要显示负向提示词那一截：只要它的下游里有图片块就分两截。 */
+function textNegOn(t){
+  return S.edges.some(e => e.from === t.id && (nodeById(e.to) || {}).type === 'image');
+}
+
+/** 图片块提交时真正用的两段文字。提示词和负向词必须同一个来源，
+    分开各判一次的话迟早会对不上（比如镜像只判了提示词那一半）。 */
+function imgTexts(n){
+  const mt = mirrorText(n);
+  return {
+    on: mt.on,
+    prompt: mt.on ? mt.text : (n.imgPrompt || ''),
+    neg: (mt.on ? mt.neg : n.imgParams.negativePrompt) || '',
+  };
+}
+
 /** 上游文本 —— 连线时实时镜像到下游输入框 */
 function mirrorText(n){
   const ups = upsOf(n.id, 'in').filter(u => u.type === 'text');
   const txt = ups.map(u => u.text || '').filter(t => t.trim()).join('\n\n');
-  return { text:txt, on:ups.length > 0 && txt.length > 0, src:ups };
+  // 负向只收「已经分两截」的上游：单向文本块没开负向那一截，就不该凭空造一段负向词出来
+  const neg = ups.filter(u => textNegOn(u)).map(u => u.negText || '').filter(t => t.trim()).join('\n\n');
+  return { text:txt, neg:neg, on:ups.length > 0 && txt.length > 0, src:ups };
 }
 
 /** 某块是否为生成块（需要出端口 + 悬浮工具条） */
@@ -708,8 +735,8 @@ function canGenerate(n){
 function newNode(type, x, y){
   const n = {
     id:nid(), type, x:Math.round(x), y:Math.round(y), name:'',
-    text:'', img:null, imgPrompt:'',
-    imgParams:{ model:'qwen-image-3.0-pro', size:'1024x1024', n:1, way:'auto', negativePrompt:'', seed:'', promptExtend:true, watermark:false },    vid:null, aud:null, prompt:'',
+    text:'', negText:DEFAULT_NEG, img:null, imgPrompt:'',
+    imgParams:{ model:'qwen-image-3.0-pro', size:'1024x1024', n:1, way:'auto', negativePrompt:DEFAULT_NEG, seed:'', promptExtend:true, watermark:false },    vid:null, aud:null, prompt:'',
     params:{ model:'wan3.0-video', mode:'fl', duration:5, resolution:'720P', ratio:'adaptive', audio:true },
     showFrames:false, barOff:{ dx:0, dy:0 },
     z:++S.zTop,                   // 新块默认压在最上层
@@ -1011,7 +1038,12 @@ function bodyHTML(n){
   const mt = mirrorText(n);
 
   if (n.type === 'text'){
-    return '<textarea class="prompt" data-bind="text" placeholder="请输入文本">' + esc(n.text) + '</textarea>';
+    // 连着图片块时分两截：上面提示词、下面负向提示词；不连就只有一截
+    return '<textarea class="prompt" data-bind="text" placeholder="请输入文本">' + esc(n.text) + '</textarea>' +
+      (textNegOn(n) ? '<div class="negWrap">' +
+        '<div class="negLb">负向提示词</div>' +
+        '<textarea class="prompt neg" data-bind="negText" placeholder="不想出现的元素…">' + esc(n.negText || '') + '</textarea>' +
+      '</div>' : '');
   }
   if (r === 'imageSrc') return mediaHTML(n, 'image');
   if (r === 'videoSrc') return mediaHTML(n, 'video');
@@ -1037,9 +1069,18 @@ function bodyHTML(n){
         '<button class="opt' + (p.way === 'ref' ? ' on' : '') + '" data-way="ref">↗ 参考图生图</button>' +
         '<button class="opt' + (p.way === 'stylize' ? ' on' : '') + '" data-way="stylize">✧ 风格化转绘</button>' +
       '</div>';
-    return '<textarea class="prompt' + (mt.on ? ' mirror' : '') + '" data-bind="imgPrompt"' +
+    const negTa = '<div class="negWrap">' +
+        '<div class="negLb">负向提示词</div>' +
+        '<textarea class="prompt neg' + (mt.on ? ' mirror' : '') + '" data-bind="negPrompt"' +
+        (mt.on ? ' readonly' : '') + ' placeholder="不想出现的元素…">' + esc(mt.on ? mt.neg : p.negativePrompt) + '</textarea>' +
+      '</div>';
+    return '<div class="negWrap">' +
+        '<div class="negLb">提示词</div>' +
+        '<textarea class="prompt' + (mt.on ? ' mirror' : '') + '" data-bind="imgPrompt"' +
         (mt.on ? ' readonly' : '') + ' placeholder="' +
         (mt.on ? '' : refs.length ? '描述要如何改造这张参考图…' : '描述你想要的画面…') + '">' + esc(mt.on ? mt.text : n.imgPrompt) + '</textarea>' +
+      '</div>' +
+      negTa +
       chips + ways +
       (n.gen.images.length
         ? '<div class="nThumb" style="display:flex;gap:5px;flex-wrap:wrap">' + n.gen.images.slice(0,6).map(u =>
@@ -1324,9 +1365,9 @@ function softSync(){
           textToEdit(ed, n.prompt || '', refList(n));
         }
       } else {
-        const ta = el.querySelector('textarea.prompt');
+        const mt = mirrorText(n);
+        const ta = el.querySelector('textarea.prompt:not(.neg)');
         if (ta){
-          const mt = mirrorText(n);
           ta.readOnly = mt.on;
           ta.classList.toggle('mirror', mt.on);
           ta.value = mt.on ? mt.text : (r === 'imageGen' ? n.imgPrompt : n.prompt);
@@ -1336,6 +1377,13 @@ function softSync(){
               ? (upstreamImages(n).length ? '描述要如何改造这张参考图…' : '描述你想要的画面…')
               : (rm.mode === 'omni' ? '使用参考内容，例如：@图片1 @视频1 @音频1' : '描述你想要生成的视频内容');
           }
+        }
+        // 负向提示词那一截：被镜像时跟提示词一样变只读
+        const nt = el.querySelector('textarea.prompt.neg');
+        if (nt){
+          nt.readOnly = mt.on;
+          nt.classList.toggle('mirror', mt.on);
+          if (nt.dataset.bind === 'negPrompt') nt.value = mt.on ? mt.neg : (n.imgParams.negativePrompt || '');
         }
       }
       const c = el.querySelector('[data-cost]');
@@ -1903,6 +1951,8 @@ function initCanvas(){
     if (b === 'text'){ n.text = t.value; softSync(); }
     else if (b === 'prompt'){ n.prompt = t.value; softSync(); }
     else if (b === 'imgPrompt'){ n.imgPrompt = t.value; softSync(); }
+    else if (b === 'negPrompt'){ n.imgParams.negativePrompt = t.value; softSync(); }
+    else if (b === 'negText'){ n.negText = t.value; softSync(); }
   });
 
   // 多参考：点列表项插芯片、点芯片删芯片、点别处收起列表
@@ -2042,8 +2092,9 @@ async function runVideo(n){
 }
 
 async function runImage(n){
-  const mt = mirrorText(n);
-  let prompt = mt.on ? mt.text : n.imgPrompt;
+  const tx = imgTexts(n);
+  let prompt = tx.prompt;
+  const neg = tx.neg;
   const refs = upstreamImages(n);
   const p = n.imgParams;
   const stylize = p.way === 'stylize';
@@ -2053,7 +2104,7 @@ async function runImage(n){
 
   const body = {
     prompt, model:p.model, size:p.size, n:p.n,
-    negativePrompt:p.negativePrompt || undefined, seed:p.seed || undefined,
+    negativePrompt:neg || undefined, seed:p.seed || undefined,
     promptExtend:p.promptExtend, watermark:p.watermark,
     promptExtendMode: refs.length ? 'direct' : 'agent',
     refs: refs.length > 10 ? [] : refs.map(r => r.img.url),
@@ -2064,7 +2115,8 @@ async function runImage(n){
   }
 
   L('▶ ' + nodeName(n) + ' 提交生图：' + p.model + ' · ' + p.size + ' ×' + p.n +
-    ' · ' + (refs.length ? refs.length + ' 张参考图' : '文生图'), 'run');
+    ' · ' + (refs.length ? refs.length + ' 张参考图' : '文生图') +
+    (neg.trim() ? ' · 负向 ' + neg.length + ' 字' : ''), 'run');
   const g = await post('/api/genimg', body);
   if (!g.ok) throw new Error(g.error);
   if (g.note) L('  ' + g.note, 'dim');
@@ -2290,6 +2342,14 @@ function loadWfText(text, handle, name){
       Object.keys(base).forEach(k => {
         if (n[k] === undefined) n[k] = clone(base[k]);   // clone：否则多个块共用同一个参数对象
       });
+      // imgParams 是嵌套对象，上面那层补不到，得单独再补一次（老工作流的
+      // imgParams 里没有 negativePrompt 这个键）。只补 undefined：
+      // 用户自己清空成 '' 的尊重原样，不会被默认值塞回去一段没写过的英文。
+      if (n.imgParams){
+        Object.keys(base.imgParams).forEach(k => {
+          if (n.imgParams[k] === undefined) n.imgParams[k] = clone(base.imgParams[k]);
+        });
+      }
       n.gen = Object.assign({ status:null, taskId:null, resultUrl:null, error:'', images:[], effective:'' }, n.gen || {});
       n.barOff = n.barOff || { dx:0, dy:0 };
       n.id = n.id || nid();
@@ -2558,7 +2618,7 @@ function boot(){
 
   // 供无头浏览器验收使用的只读探针（不暴露任何写能力）
   window.__wf = {
-    S, addNode, resolveVideo, canConnect, nodePorts, role, mirrorText, topo, isGen,
+    S, addNode, resolveVideo, canConnect, nodePorts, role, mirrorText, imgTexts, textNegOn, topo, isGen,
     imgWay, canGenerate, costText, upsOf, edgeOf, upstreamImages, upstreamMedia,
     addEdge, render, softSync, delNode, delEdge, copyNode, duplicateNode,
     uploadFiles, fillSlot, mediaHTML, bringToFront,

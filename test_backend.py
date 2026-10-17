@@ -144,10 +144,30 @@ for bad in ("1024*1024", "4096x4096", "abcxdef", "512x512"):
     except B.ApiError:
         ok("非法 size 被拒 (%s)" % bad, bad != "512x512")
 
-# 2.1 系列不支持 negative_prompt
+# negative_prompt：除官方排除的 wan2.7-image 两个变体外都支持（曾误以为只有 3.0 系列支持）
 CAPTURED.clear()
 B.submit_image("x", [], "qwen-image-2.1-pro", "1024x1024", 1, "模糊", None, True, "direct", False)
-ok("2.1 系列不下发 negative_prompt", "negative_prompt" not in CAPTURED[-1]["body"])
+ok("2.1 系列也下发 negative_prompt", CAPTURED[-1]["body"].get("negative_prompt") == "模糊")
+
+CAPTURED.clear()
+B.submit_image("x", [], "qwen-image-2.1-turbo", "1024x1024", 1, "模糊", None, True, "direct", False)
+ok("2.1-turbo 也下发 negative_prompt", CAPTURED[-1]["body"].get("negative_prompt") == "模糊")
+
+CAPTURED.clear()
+B.submit_image("x", [], "wan2.7-image-pro", "1024x1024", 1, "模糊", None, True, "direct", False)
+ok("wan2.7-image-pro 不下发 negative_prompt", "negative_prompt" not in CAPTURED[-1]["body"])
+
+CAPTURED.clear()
+B.submit_image("x", [], "wan2.7-image", "1024x1024", 1, "模糊", None, True, "direct", False)
+ok("wan2.7-image 不下发 negative_prompt", "negative_prompt" not in CAPTURED[-1]["body"])
+
+CAPTURED.clear()
+B.submit_image("x", [], "qwen-image-3.0", "1024x1024", 1, "", None, True, "direct", False)
+ok("负向提示词为空时不下发", "negative_prompt" not in CAPTURED[-1]["body"])
+
+CAPTURED.clear()
+B.submit_image("x", [], "wan2.7-image-extra", "1024x1024", 1, "模糊", None, True, "direct", False)
+ok("相似模型名不会被误判成排除项", CAPTURED[-1]["body"].get("negative_prompt") == "模糊")
 
 # ---------------------------------------------------------------- 3. 模式自动降级
 R2 = B.Handler._resolve_mode
@@ -423,8 +443,7 @@ finally:
     shutil.rmtree(_costdir, ignore_errors=True)
 
 # ---------------------------------------------------------------- 11. 图片按模型 × 规格计价
-# 取自百炼控制台价格表 2026-10-17。两个反直觉的点：
-#   3.0 的 1K/2K 同价；只有 3.0-pro 的 2K 翻倍；3.0 系列按参考图张数收输入费，2.1 不收。
+# 取自百炼控制台价格表 2026-10-17。
 ok("图片单价表按模型分组", isinstance(B.IMAGE_COST.get("qwen-image-3.0-pro"), dict)
    and "out" in B.IMAGE_COST.get("qwen-image-3.0-pro", {}))
 ok("3.0-pro 1K 单价 0.25", B.image_unit_cost("qwen-image-3.0-pro", "1024x1024") == 0.25)

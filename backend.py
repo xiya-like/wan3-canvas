@@ -93,10 +93,12 @@ IMAGE_MODELS = [
 ]
 IMAGE_SIZES = ["auto", "1024x1024", "1024x1536", "1536x1024", "1440x1440", "1280x720", "720x1280"]
 
+# 不接受 negative_prompt 的模型（官方文档明确排除的就这两个）。
+# 其余全部支持，所以 UI 上不做任何门禁，也不提示「不支持」。
+NEG_UNSUPPORTED = {"wan2.7-image-pro", "wan2.7-image"}
+
 # 图片按「模型 × 输出规格」计价，单位：元/张。in 是每张参考图的输入价。
-# 取自百炼控制台价格表 2026-10-17。两个反直觉的点：
-#   · qwen-image-3.0 的 1K 与 2K 同价（0.18），只有 3.0-pro 的 2K 翻倍
-#   · 3.0 系列按输入张数收费（每张 0.02），2.1 系列不收输入费
+# 取自百炼控制台价格表 2026-10-17。
 DEFAULT_IMAGE_MODEL = "qwen-image-3.0-pro"
 IMAGE_COST = {
     "qwen-image-3.0-pro":   {"out": {"1K": 0.25, "2K": 0.50}, "in": 0.02},
@@ -385,7 +387,9 @@ def submit_image(prompt, images, model, size, n, negative_prompt, seed, prompt_e
         eff_mode = "direct"
     if eff_mode == "agent":
         payload["prompt_extend_mode"] = "agent"
-    if negative_prompt and str(model or "").startswith("qwen-image-3.0"):
+    # 官方：除 wan2.7-image-pro 和 wan2.7-image 外所有模型都支持 negative_prompt。
+    # 走 OpenAI 兼容平铺字段；Wan 系列要用 parameters.negative_prompt，不在本接口范围内。
+    if negative_prompt and str(model or "") not in NEG_UNSUPPORTED:
         payload["negative_prompt"] = negative_prompt
     if seed is not None and seed != "":
         try:

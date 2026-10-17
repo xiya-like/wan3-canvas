@@ -15,7 +15,7 @@
 | 文档 | 内容 |
 |---|---|
 | [`CHANGELOG.md`](CHANGELOG.md) | 21 条变更记录（首版 + 二十次修订） |
-| [`docs/dev-notes.md`](docs/dev-notes.md) | 踩过的 36 个坑，改代码前先看 |
+| [`docs/dev-notes.md`](docs/dev-notes.md) | 踩过的 38 个坑，改代码前先看 |
 
 ---
 
@@ -207,6 +207,29 @@ placeholder 变成「使用参考内容，例如：@图片1 @视频1 @音频1」
 > 一旦接了线，块的角色就由上游决定了，没有选择的余地。
 > 断掉连线入口立刻回来。视频块的「视频上传 / 图生视频」同理。
 
+### 提示词与负向提示词
+
+图片块里有两个输入框：**上面提示词、下面负向提示词**。新建块时负向那栏已经填好官方默认句：
+
+```
+Low resolution, low quality, distorted limbs, malformed fingers, oversaturated colors,
+wax-figure appearance, lack of facial detail, excessive smoothness,
+AI-looking artifacts, chaotic composition, blurry or warped text.
+```
+
+直接用就行，不想用就清空——清空了就不下发 `negative_prompt`。
+官方只排除了 `wan2.7-image-pro` 和 `wan2.7-image`，项目里这四个模型都支持，界面上不做任何限制。
+
+**文本块连上图片块时会自动分成两截**（上面提示词、下面负向提示词），
+没连图片块时仍然只有一截——连视频块也不分。只有下游有图片块才分两截，
+所以一个文本块同时喂视频和图片时，两截都在，两边各取各的。
+
+被镜像时（文本块连着图片块）图片块里那两个框都变成虚线只读，
+内容跟着上游文本块实时变，跟提示词一个规矩。断开连线立刻回落到图片块自己填的内容。
+
+> 老工作流导入时 `negativePrompt` 字段会被补上默认值；
+> 但你自己清空成空串的不会被默认值塞回去。
+
 ### 块操作
 
 **右键任意块**：
@@ -282,8 +305,6 @@ placeholder 变成「使用参考内容，例如：@图片1 @视频1 @音频1」
 「输出」按 `单价 × 数量` 算，「参考图输入」按 `0.02 × 连进来的图数` 算——
 所以 3.0-pro 带 10 张参考图会比 2.1-pro 贵出 ¥0.20。
 
-> 两处反直觉，别想当然：**3.0 的 1K 和 2K 同价**（都是 ¥0.18），只有 3.0-pro 的 2K 翻倍；
-> **只有 3.0 系列收参考图输入费**，2.1 系列不收。
 > 只想便宜又不在乎质量的话，`2.1-turbo` 是 ¥0.10/张，比默认的 `3.0-pro` 便宜六成。
 
 ### 视频（按秒）
@@ -312,10 +333,10 @@ placeholder 变成「使用参考内容，例如：@图片1 @视频1 @音频1」
 
 五套测试**全部不调用任何生成接口**，可以随时跑：
 ```powershell
-python test_backend.py   # 142 项：请求体结构 + 校验分支 + 素材上传换 url + 视频/图片分档计价 + 启动清理（mock urlopen）
+python test_backend.py   # 147 项：请求体结构 + 校验分支 + 素材上传换 url + 分档计价 + 负向提示词门禁 + 启动清理（mock urlopen）
 python test_upload.py    # 20 项：真实上传 → URL 可达 → 图片解码 → 灯箱（只写本地）
 python test_media.py     #  9 项：重绘/拖动/点空白都不能打断播放中的媒体
-python test_ui.py        # 251 项：无头浏览器 DOM 断言（真实 MouseEvent）
+python test_ui.py        # 283 项：无头浏览器 DOM 断言（真实 MouseEvent）
 python test_server.py    # 19 项：真启动服务 + 启动清理 + 路由 + 静态白名单
 ```
 
@@ -327,13 +348,13 @@ python test_server.py    # 19 项：真启动服务 + 启动清理 + 路由 + �
 > `_shot.png`、`_zshot.png` 和五个 `test_*_out.txt`。
 
 结果分别写到 `test_backend_out.txt` / `test_upload_out.txt` / `test_media_out.txt` /
-`test_ui_out.txt` / `test_server_out.txt`。合计 **441 项断言**。
+`test_ui_out.txt` / `test_server_out.txt`。合计 **478 项断言**。
 
 - `test_backend.py` 拦截 `urllib.request.urlopen`，断言视频用 `input.media` 数组、
   图像用 OpenAI 兼容平铺结构、`n` 是整数、`size` 用字母 x、互斥规则、模式降级、素材分档上限；
   素材上传按官方现行结构 mock（只回 `file_id`，要再查一次才拿得到 url）；
   费用按「模型 × 规格」分别断言视频与图片两套（含 `WAN_MODEL` 与前端传值不一致、
-  参考图输入费、估价按提交的 `n` 而非本地落盘张数的情形）；
+  参考图输入费、估价按提交的 `n` 而非本地落盘张数的情形）；负向提示词按官方排除名单判；
   另在**临时沙箱**里验证 `purge_uploads()` 的文件数/字节数/幂等/跳过非空子目录——绝不碰真实 `uploads/`。
 - `test_upload.py` 在浏览器里用 canvas 造一张真 PNG，走完整上传链路，再检查
   返回的素材 URL 带没带 `/uploads/` 前缀、图片能不能解码、块里的大图元素尺寸对不对、灯箱能不能开关。
@@ -342,7 +363,7 @@ python test_server.py    # 19 项：真启动服务 + 启动清理 + 路由 + �
 - `test_ui.py` 注入探针脚本，dispatch 真实 `MouseEvent` 跑完整交互，验证角色推导、
   实时镜像、图生视频联动、帧位上限、右键菜单、工具条、几何关系、布局不塌陷、
   拖动置顶、导入块数、保存覆盖的文件句柄绑定、块内入口的收起规则、
-  选中后工具条钉住与悬停并存等。
+  选中后工具条钉住与悬停并存、负向提示词的双框与两截镜像、视频/图片分档计价等。
 - `test_server.py` 起真实进程：先往三个素材目录各埋一个探针，起来之后断言
   `uploads/` 已被清空而 `media/` `cache/` 原封不动，再验 `KEEP_UPLOADS=1` 开关、
   `/api/config`、未知路由 404、`.env` 与源码被静态白名单挡住。
@@ -395,7 +416,7 @@ wan3画布/
 ├── test_ui.py         无头浏览器 DOM 断言
 ├── test_server.py     服务集成测试
 ├── docs/
-│   └── dev-notes.md   开发笔记：踩过的 36 个坑
+│   └── dev-notes.md   开发笔记：踩过的 38 个坑
 ├── CHANGELOG.md       变更记录
 ├── LICENSE            MIT
 ├── .env.example       Key 模板
@@ -423,7 +444,7 @@ wan3画布/
 
 ## 开发笔记
 
-改代码前踩过的 **36 个坑**都在 [`docs/dev-notes.md`](docs/dev-notes.md)。
+改代码前踩过的 **38 个坑**都在 [`docs/dev-notes.md`](docs/dev-notes.md)。
 每一条都对应一个真实存在过的 bug，比如：
 
 - `render()` 会销毁重建所有节点，`<video>`/`<audio>` 也在内 —— 播放器被重置回 0:00 的元凶

@@ -1225,6 +1225,157 @@ PROBE = r"""
       ok('未知模型退回默认模型而不是 0', ct() === '¥0.25', ct());
     })();
 
+    /* ---- 36. 负向提示词：图片块两个框 + 文本块连图片块时两截 ----
+       官方只排除 wan2.7-image-pro / wan2.7-image，qwen-image 全系列都支持，
+       所以 UI 上不做任何「不支持」的提示。 */
+    (function(){
+      var HEAD = 'Low resolution, low quality';
+
+      function ta(id, sel){ return nodeEl(id).querySelector(sel); }
+      function cnt(id){ return nodeEl(id).querySelectorAll('textarea').length; }
+      function setVal(el2, v){
+        el2.value = v;
+        el2.dispatchEvent(new Event('input', {bubbles:true}));
+      }
+      function byId(id){ return W.S.nodes.filter(function(n){ return n.id === id; })[0]; }
+
+      // --- 新建文本块：一截 ---
+      W.S.nodes.length = 0; W.S.edges.length = 0;
+      var t0 = W.addNode('text', 40, 200);
+      W.render();
+      ok('新文本块只有一个输入框', cnt(t0.id) === 1, cnt(t0.id));
+      ok('未连图片块时不显示负向那一截', !ta(t0.id, 'textarea.prompt.neg'));
+
+      // --- 新建图片块：两框 + 默认值 ---
+      var i0 = W.addNode('image', 300, 200);
+      W.render();
+      ok('图片块有两个输入框', cnt(i0.id) === 2, cnt(i0.id));
+      ok('上面是提示词、下面是负向提示词',
+         ta(i0.id, 'textarea.prompt:not(.neg)').dataset.bind === 'imgPrompt' &&
+         ta(i0.id, 'textarea.prompt.neg').dataset.bind === 'negPrompt');
+      ok('负向提示词默认是官方那句',
+         ta(i0.id, 'textarea.prompt.neg').value.indexOf(HEAD) === 0 &&
+         i0.imgParams.negativePrompt.indexOf(HEAD) === 0,
+         ta(i0.id, 'textarea.prompt.neg').value.slice(0, 28));
+
+      setVal(ta(i0.id, 'textarea.prompt.neg'), 'blurry');
+      ok('负向框输入写回 imgParams.negativePrompt',
+         i0.imgParams.negativePrompt === 'blurry', i0.imgParams.negativePrompt);
+
+      // --- 文本块连上图片块 -> 两截 ---
+      var t1 = W.addNode('text', 40, 500);
+      t1.text = '一只猫';
+      W.addEdge(t1.id, i0.id, 'in');
+      W.render();
+      ok('文本块连上图片块后变两截', cnt(t1.id) === 2, cnt(t1.id));
+      ok('文本块第二截绑定 negText', ta(t1.id, 'textarea.prompt.neg').dataset.bind === 'negText');
+      ok('文本块负向也带默认值', ta(t1.id, 'textarea.prompt.neg').value.indexOf(HEAD) === 0);
+
+      // --- 镜像：两个框都只读，负向取上游那一截 ---
+      var iv = ta(i0.id, 'textarea.prompt:not(.neg)');
+      var nv = ta(i0.id, 'textarea.prompt.neg');
+      ok('镜像后提示词框只读并显示上游文字', iv.readOnly === true && iv.value === '一只猫', iv.value);
+      ok('镜像后负向框只读', nv.readOnly === true, String(nv.readOnly));
+      ok('镜像后负向取上游的（不是图片块自己那份 blurry）',
+         nv.value.indexOf(HEAD) === 0 && nv.value !== 'blurry', nv.value.slice(0, 28));
+      ok('mirrorText 带回了负向', W.mirrorText(i0).neg.indexOf(HEAD) === 0);
+
+      setVal(ta(t1.id, 'textarea.prompt.neg'), '不要糊');
+      ok('文本块负向写入 negText', t1.negText === '不要糊', t1.negText);
+      W.render();
+      ok('上游改负向，图片块负向框跟着变',
+         ta(i0.id, 'textarea.prompt.neg').value === '不要糊',
+         ta(i0.id, 'textarea.prompt.neg').value);
+
+      // --- 断开 -> 回落 ---
+      W.delEdge(W.S.edges.filter(function(e){ return e.from === t1.id; })[0].id);
+      W.render();
+      ok('断开后图片块负向回落到自己填的 blurry',
+         ta(i0.id, 'textarea.prompt.neg').value === 'blurry',
+         ta(i0.id, 'textarea.prompt.neg').value);
+      ok('断开后文本块回到一截', cnt(t1.id) === 1, cnt(t1.id));
+
+      // --- 连视频块不分两截 ---
+      W.S.nodes.length = 0; W.S.edges.length = 0;
+      var t2 = W.addNode('text', 40, 200);
+      var v2 = W.addNode('video', 400, 200);
+      W.addEdge(t2.id, v2.id, 'in');
+      W.render();
+      ok('文本块连视频块仍然只有一截', cnt(t2.id) === 1, cnt(t2.id));
+
+      // --- 同时连视频和图片：仍分两截 ---
+      var i2 = W.addNode('image', 400, 620);
+      W.addEdge(t2.id, i2.id, 'in');
+      W.render();
+      ok('文本块同时连视频和图片时分两截', cnt(t2.id) === 2, cnt(t2.id));
+
+      // --- 上游没填负向时不凭空造 ---
+      W.S.nodes.length = 0; W.S.edges.length = 0;
+      var t3 = W.addNode('text', 40, 200);
+      t3.text = '狗';
+      t3.negText = '';
+      var i3 = W.addNode('image', 400, 200);
+      W.addEdge(t3.id, i3.id, 'in');
+      W.render();
+      ok('上游没填负向时镜像出来的负向是空', W.mirrorText(i3).neg === '', JSON.stringify(W.mirrorText(i3).neg));
+      ok('此时图片块负向框显示空',
+         ta(i3.id, 'textarea.prompt.neg').value === '', JSON.stringify(ta(i3.id, 'textarea.prompt.neg').value));
+
+      // --- 老工作流导入：补默认值 ---
+      W.loadWfText(JSON.stringify({ version:2, nodes:[
+        { id:'n1', type:'image', x:0, y:0, imgParams:{ model:'qwen-image-3.0', size:'1024x1024', n:1 } },
+        { id:'n2', type:'text', x:0, y:0, text:'x' }
+      ], edges:[] }), null, 'old.json');
+      ok('老工作流的 negativePrompt 被补成默认值',
+         !!(byId('n1') || {}).imgParams &&
+         String((byId('n1') || {}).imgParams.negativePrompt).indexOf(HEAD) === 0,
+         String(((byId('n1') || {}).imgParams || {}).negativePrompt).slice(0, 28));
+      ok('老工作流的 negText 也被补上默认值',
+         String((byId('n2') || {}).negText).indexOf(HEAD) === 0);
+
+      W.loadWfText(JSON.stringify({ version:2, nodes:[
+        { id:'n1', type:'image', x:0, y:0, imgParams:{ model:'qwen-image-3.0', negativePrompt:'' } }
+      ], edges:[] }), null, 'old2.json');
+      ok('用户自己清空成空串的不会被默认值塞回',
+         (byId('n1') || {}).imgParams && byId('n1').imgParams.negativePrompt === '',
+         JSON.stringify(((byId('n1') || {}).imgParams || {}).negativePrompt));
+
+      // --- 导出再导入不丢 ---
+      W.S.nodes.length = 0; W.S.edges.length = 0;
+      var t4 = W.addNode('text', 40, 200);
+      t4.text = 'p'; t4.negText = 'neg-keep';
+      var i4 = W.addNode('image', 400, 200);
+      i4.imgParams.negativePrompt = 'own-neg';
+      W.addEdge(t4.id, i4.id, 'in');
+      W.loadWfText(W.wfText(), null, 'rt.json');
+      ok('导出导入后文本块负向不丢',
+         (W.S.nodes.filter(function(n){ return n.type === 'text'; })[0] || {}).negText === 'neg-keep');
+      ok('导出导入后图片块负向不丢',
+         (W.S.nodes.filter(function(n){ return n.type === 'image'; })[0] || {}).imgParams.negativePrompt === 'own-neg');
+
+      // --- 提交时真正用的是哪一段（runImage 里那两行） ---
+      W.S.nodes.length = 0; W.S.edges.length = 0;
+      var t5 = W.addNode('text', 40, 200);
+      t5.text = '上游提示词'; t5.negText = '上游负向';
+      var i5 = W.addNode('image', 400, 200);
+      i5.imgPrompt = '块内提示词'; i5.imgParams.negativePrompt = '块内负向';
+      W.addEdge(t5.id, i5.id, 'in');
+      var r5 = W.imgTexts(i5);
+      ok('镜像时提交用的提示词来自上游', r5.prompt === '上游提示词', r5.prompt);
+      ok('镜像时提交用的负向也来自上游（与提示词同源）', r5.neg === '上游负向', r5.neg);
+      ok('镜像时提示词与负向取自同一个来源（on 一致）', r5.on === true);
+
+      W.delEdge(W.S.edges.filter(function(e){ return e.from === t5.id; })[0].id);
+      var r6 = W.imgTexts(i5);
+      ok('未镜像时提交用块内自己填的两段', r6.prompt === '块内提示词' && r6.neg === '块内负向',
+         r6.prompt + ' / ' + r6.neg);
+
+      i5.imgParams.negativePrompt = '';
+      ok('负向清空后提交时不带 undefined 之外的怪值', W.imgTexts(i5).neg === '');
+
+      ok('textNegOn 对无出边的文本块为 false', W.textNegOn(t5) === false);
+    })();
+
   } catch (err){
     R.push('FAIL | 探针抛异常 | ' + (err && err.message ? err.message : String(err)) + ' @ ' + (err && err.stack ? String(err.stack).split('\n')[1] : ''));
     flush();
