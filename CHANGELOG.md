@@ -9,6 +9,50 @@
 > 另补了 MIT `LICENSE`（此前公开仓库无许可证，等于默认保留所有权利）。
 > README 随之从 41.6 KB 瘦到 17.4 KB，只留用户文档。
 
+### 2026-10-17 · 修订二十一
+
+**修「运行工作流」必崩的素材上传：DashScope 不再返回 `url`，只返回 `file_id`。**
+
+报错原文：
+
+```
+「视频块」失败：素材上传未返回 url: {"data": {"uploaded_files":
+[{"name": "0ffcc951263e492d89ba91f337a48162.png",
+  "file_id": "667a4361-a6e2-4f9e-8c3b-2b506fea68b4"}],
+  "failed_uploads": []}, "request_id": "c69d0f20-..."}
+```
+
+上传其实**成功了**（`failed_uploads` 是空的），只是后端还在按老结构
+`(data.output).url` 取地址，取不到就抛错。官方现行结构是
+`data.uploaded_files[].file_id`，地址要用 `GET /api/v1/files/{file_id}`
+再查一次（该接口的 `data.url` 是带签名的 OSS 直链，有效期约 24 小时）。
+
+- `upload_to_dashscope()` 改为三级兜底：先认老结构直接给的 `url`；
+  没有就看 `failed_uploads` 报错；再取 `file_id` 去换 url
+- 新增 `ds_body()` 统一拆外壳——原生接口放 `data`，老 SDK 放 `output`，两种都认
+- 新增 `file_url_by_id()` 走 `GET /api/v1/files/{file_id}`，带 `Authorization`
+- 换不回 url 时提示指向 `DASHSCOPE_BASE`：**文件管理 API 只在北京 Region 开放**，
+  换地域就会上传成功但查不到地址
+
+**上传请求本身一个字没改**——它本来就成功，问题纯粹在解析响应，
+所以只动读取端，不去碰已经跑通的请求体。
+
+用报错里那个真实 `file_id` 做了一次只读验证（查询接口免费，不触发生成）：
+
+```
+GET /api/v1/files/667a4361-… -> 200
+data.url = http://dashscope-file-mgr.oss-cn-beijing.aliyuncs.com/api-fs/…/0ffcc95….png?Expires=…
+再对该 url 发 Range: bytes=0-0 -> 206，取回 1 字节
+```
+
+顺带记一笔：`HEAD` 打这个签名 url 会 **403**——签名绑定了 HTTP 方法，
+不是地址失效。要验签名 url 能不能下，用 `GET` + `Range`。
+
+`test_backend.py` 82 → 101 项，新增 19 条覆盖 `ds_body` 双外壳、
+`file_url_by_id` 的方法/认证/取值、上传只发一次 POST、新旧结构分流、
+`failed_uploads` 报错、空列表、缺 `file_id`、换不回 url 的地域提示，
+以及一条端到端：i2v 模式下 `input.media[0].url` 必须是换回来的那个签名地址。
+
 ### 2026-10-16 · 第一版修订二十
 
 **多参考模式支持输入 `@` 选上游素材**（原站截图 2026-10-16 223709 / 224059 / 224342）。

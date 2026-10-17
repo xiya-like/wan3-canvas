@@ -26,6 +26,7 @@ import os
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -146,6 +147,29 @@ def ds_request(method, url, payload=None, headers=None, timeout=120):
 SERVE_DIRS = {"uploads": UPLOAD_DIR, "cache": CACHE_DIR, "media": MEDIA_DIR}
 
 
+def ds_body(data):
+    """DashScope 原生接口把业务字段放在 data，老 SDK 放在 output，两种外壳都要认。"""
+    if not isinstance(data, dict):
+        return {}
+    for key in ("data", "output"):
+        sub = data.get(key)
+        if isinstance(sub, dict):
+            return sub
+    return {}
+
+
+def file_url_by_id(file_id):
+    """file_id -> 可下载 url。文件管理 API 只在北京 Region 开放。"""
+    if not API_KEY:
+        raise ApiError(401, "服务端未配置 DASHSCOPE_API_KEY")
+    data = ds_request(
+        "GET",
+        BASE + "/api/v1/files/" + urllib.parse.quote(str(file_id), safe=""),
+        headers={"Authorization": "Bearer " + API_KEY, "Accept": "application/json"},
+    )
+    return ds_body(data).get("url")
+
+
 def resolve_local(ref):
     """前端传来的 /media/xxx.png 之类的浏览器路径 -> 服务器真实路径；已是绝对路径的原样返回。"""
     if not ref:
@@ -159,7 +183,11 @@ def resolve_local(ref):
 
 
 def upload_to_dashscope(local_path):
-    """本地素材 -> DashScope 文件服务，返回可用 url。图/视/音通用。"""
+    """本地素材 -> DashScope 文件服务，返回可直接喂给 input.media[].url 的地址。图/视/音通用。
+
+    上传接口（POST /api/v1/files）只回 file_id，url 要再用
+    GET /api/v1/files/{file_id} 换回来；老结构直接给 url 的也仍然兼容。
+    """
     name = os.path.basename(local_path)
     ctype = mimetypes.guess_type(name)[0] or "application/octet-stream"
     with open(local_path, "rb") as f:
@@ -193,9 +221,32 @@ def upload_to_dashscope(local_path):
             data = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         raise ApiError(e.code, "素材上传失败 %s: %s" % (e.code, e.read().decode("utf-8", "replace")[:300]))
-    url = (data.get("output") or {}).get("url")
-    if not url:
+
+    body = ds_body(data)
+
+    # 老结构：上传即给 url
+    if body.get("url"):
+        return body["url"]
+
+    failed = body.get("failed_uploads") or []
+    if failed:
+        raise ApiError(502, "素材上传被拒绝: %s" % json.dumps(failed, ensure_ascii=False)[:300])
+
+    files = body.get("uploaded_files") or []
+    if not files:
         raise ApiError(502, "素材上传未返回 url: %s" % json.dumps(data, ensure_ascii=False)[:300])
+
+    file_id = (files[0] or {}).get("file_id")
+    if not file_id:
+        raise ApiError(502, "素材上传未返回 file_id: %s" % json.dumps(data, ensure_ascii=False)[:300])
+
+    url = file_url_by_id(file_id)
+    if not url:
+        raise ApiError(
+            502,
+            "素材 %s 已上传但查不到 url（file_id=%s）；文件管理 API 仅在北京 Region 开放，"
+            "请检查 DASHSCOPE_BASE" % (name, file_id),
+        )
     return url
 
 

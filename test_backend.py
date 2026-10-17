@@ -32,15 +32,25 @@ class FakeResp:
     def __exit__(self, *a): return False
 
 def fake_urlopen(req, timeout=None):
+    try:
+        parsed = json.loads(req.data.decode("utf-8")) if req.data else None
+    except Exception:
+        parsed = None  # 上传素材是 multipart 二进制，不是 JSON
     CAPTURED.append({
         "url": req.full_url,
         "method": req.get_method(),
-        "body": json.loads(req.data.decode("utf-8")) if req.data else None,
+        "body": parsed,
         "headers": {k.lower(): v for k, v in req.headers.items()},
     })
     url = req.full_url
-    if url.endswith("/api/v1/files"):
-        return FakeResp({"output": {"url": "oss://mock/uploaded-file"}})
+    # 真实返回结构：上传只给 file_id，url 要再查一次
+    if url.endswith("/api/v1/files") and req.get_method() == "POST":
+        return FakeResp({"request_id": "req-mock", "data": {
+            "uploaded_files": [{"name": "a.png", "file_id": "file-mock-0001"}], "failed_uploads": []}})
+    if "/api/v1/files/" in url:
+        return FakeResp({"request_id": "req-mock", "data": {
+            "file_id": "file-mock-0001", "name": "a.png", "size": 16,
+            "url": "http://dashscope-file-mgr.oss-cn-beijing.aliyuncs.com/mock/a.png?Expires=1&Signature=m"}})
     if "/compatible-mode/v1/images/generations" in url:
         return FakeResp({"data": [{"url": "https://mock.invalid/img1.png"}]})
     if "video-synthesis" in url:
@@ -257,6 +267,116 @@ try:
     ok("清理默认目标由 main() 决定", inspect.signature(B.purge_uploads).parameters["target"].default is None)
 finally:
     shutil.rmtree(_sandbox, ignore_errors=True)
+
+# ---------------------------------------------------------------- 9. 文件上传：file_id -> url
+# 官方现状：POST /api/v1/files 只回 file_id，url 要靠 GET /api/v1/files/{file_id} 换。
+MOCK_URL = "http://dashscope-file-mgr.oss-cn-beijing.aliyuncs.com/mock/a.png?Expires=1&Signature=m"
+
+ok("ds_body 认 data 外壳", B.ds_body({"data": {"url": "u"}}) == {"url": "u"})
+ok("ds_body 认 output 外壳（老 SDK）", B.ds_body({"output": {"url": "u"}}) == {"url": "u"})
+ok("ds_body 对非字典返回空", B.ds_body(None) == {} and B.ds_body("x") == {})
+ok("ds_body 对无外壳的裸字典返回空", B.ds_body({"foo": 1}) == {})
+
+CAPTURED.clear()
+got = B.file_url_by_id("file-mock-0001")
+c = CAPTURED[-1]
+ok("file_url_by_id 走 GET /api/v1/files/{file_id}",
+   c["method"] == "GET" and c["url"].endswith("/api/v1/files/file-mock-0001"), c["url"])
+ok("file_url_by_id 带 Bearer 认证", c["headers"].get("authorization") == "Bearer sk-MOCK-NOT-REAL")
+ok("file_url_by_id 返回 data.url", got == MOCK_URL, got)
+
+_orig_urlopen = B.urllib.request.urlopen
+
+def with_upload_resp(payload, fn):
+    """临时把上传接口的返回换成 payload，跑 fn，再还原。"""
+    def fake(req, timeout=None):
+        if req.full_url.endswith("/api/v1/files") and req.get_method() == "POST":
+            return FakeResp(payload)
+        return fake_urlopen(req, timeout=timeout)
+    B.urllib.request.urlopen = fake
+    try:
+        return fn()
+    finally:
+        B.urllib.request.urlopen = _orig_urlopen
+
+_up = tempfile.mkdtemp(prefix="wan3_up_")
+try:
+    _png = os.path.join(_up, "a.png")
+    with open(_png, "wb") as _f:
+        _f.write(b"\x89PNG\r\n\x1a\n" + b"0" * 16)
+
+    # —— 新结构：上传只回 file_id
+    CAPTURED.clear()
+    url = B.upload_to_dashscope(_png)
+    _posts = [x for x in CAPTURED if x["method"] == "POST"]
+    _gets = [x for x in CAPTURED if x["method"] == "GET"]
+    ok("上传只发一次 POST", len(_posts) == 1)
+    ok("上传带 X-DashScope-File-Upload 头", _posts[0]["headers"].get("x-dashscope-file-upload") == "true")
+    ok("上传后自动再查一次 url", len(_gets) == 1 and _gets[0]["url"].endswith("/api/v1/files/file-mock-0001"))
+    ok("新结构：file_id 换回 url 后返回", url == MOCK_URL, url)
+
+    # —— 端到端：i2v 的首帧用的是换回来的签名 url
+    CAPTURED.clear()
+    h = FakeHandler({"prompt": "一只猫", "mode": "i2v", "firstFrame": _png})
+    h._handle_generate()
+    _vs = [x for x in CAPTURED if "video-synthesis" in x["url"]]
+    ok("图生视频把换回来的 url 写进 input.media",
+       bool(_vs) and _vs[-1]["body"]["input"]["media"][0]["url"] == MOCK_URL,
+       _vs[-1]["body"]["input"]["media"][0]["url"] if _vs else "没抓到 video-synthesis")
+    ok("图生视频 media 类型是 first_frame",
+       bool(_vs) and _vs[-1]["body"]["input"]["media"][0]["type"] == "first_frame")
+
+    # —— 老结构：上传直接给 url，仍然不查第二次
+    CAPTURED.clear()
+    def _legacy():
+        return B.upload_to_dashscope(_png)
+    got2 = with_upload_resp({"output": {"url": "oss://legacy/direct.png"}}, _legacy)
+    ok("老结构 output.url 仍直接可用", got2 == "oss://legacy/direct.png", got2)
+    ok("老结构不多发一次 GET", not [x for x in CAPTURED if x["method"] == "GET"])
+
+    # —— failed_uploads 非空
+    def _rejected():
+        return B.upload_to_dashscope(_png)
+    try:
+        with_upload_resp({"data": {"uploaded_files": [],
+                                   "failed_uploads": [{"name": "a.png", "code": "InvalidFile"}]}}, _rejected)
+        ok("上传被拒时报错", False, "没有抛异常")
+    except B.ApiError as e:
+        ok("上传被拒时提示被拒绝", "被拒绝" in e.message, e.message[:90])
+
+    # —— uploaded_files 为空
+    def _empty():
+        return B.upload_to_dashscope(_png)
+    try:
+        with_upload_resp({"data": {"uploaded_files": [], "failed_uploads": []}}, _empty)
+        ok("空 uploaded_files 报错", False, "没有抛异常")
+    except B.ApiError as e:
+        ok("空 uploaded_files 的文案是未返回 url", "未返回 url" in e.message, e.message[:90])
+
+    # —— 有 uploaded_files 但缺 file_id
+    def _nofid():
+        return B.upload_to_dashscope(_png)
+    try:
+        with_upload_resp({"data": {"uploaded_files": [{"name": "a.png"}], "failed_uploads": []}}, _nofid)
+        ok("缺 file_id 报错", False, "没有抛异常")
+    except B.ApiError as e:
+        ok("缺 file_id 的文案点明 file_id", "file_id" in e.message, e.message[:90])
+
+    # —— 换不回 url：提示地域限制
+    def _nourl(req, timeout=None):
+        if "/api/v1/files/" in req.full_url:
+            return FakeResp({"data": {"file_id": "file-mock-0001", "name": "a.png"}})
+        return fake_urlopen(req, timeout=timeout)
+    B.urllib.request.urlopen = _nourl
+    try:
+        B.upload_to_dashscope(_png)
+        ok("换不回 url 时报错", False, "没有抛异常")
+    except B.ApiError as e:
+        ok("换不回 url 时提示文件管理仅北京 Region", "DASHSCOPE_BASE" in e.message and "北京" in e.message, e.message[:110])
+    finally:
+        B.urllib.request.urlopen = _orig_urlopen
+finally:
+    shutil.rmtree(_up, ignore_errors=True)
 
 # ---------------------------------------------------------------- 输出
 npass = sum(1 for l in R if l.startswith("PASS"))

@@ -15,7 +15,7 @@
 | 文档 | 内容 |
 |---|---|
 | [`CHANGELOG.md`](CHANGELOG.md) | 21 条变更记录（首版 + 二十次修订） |
-| [`docs/dev-notes.md`](docs/dev-notes.md) | 踩过的 32 个坑，改代码前先看 |
+| [`docs/dev-notes.md`](docs/dev-notes.md) | 踩过的 33 个坑，改代码前先看 |
 
 ---
 
@@ -284,7 +284,7 @@ placeholder 变成「使用参考内容，例如：@图片1 @视频1 @音频1」
 
 五套测试**全部不调用任何生成接口**，可以随时跑：
 ```powershell
-python test_backend.py   # 82 项：请求体结构 + 校验分支 + 启动清理（mock urlopen）
+python test_backend.py   # 101 项：请求体结构 + 校验分支 + 素材上传换 url + 启动清理（mock urlopen）
 python test_upload.py    # 20 项：真实上传 → URL 可达 → 图片解码 → 灯箱（只写本地）
 python test_media.py     #  9 项：重绘/拖动/点空白都不能打断播放中的媒体
 python test_ui.py        # 228 项：无头浏览器 DOM 断言（真实 MouseEvent）
@@ -299,10 +299,11 @@ python test_server.py    # 19 项：真启动服务 + 启动清理 + 路由 + �
 > `_shot.png`、`_zshot.png` 和五个 `test_*_out.txt`。
 
 结果分别写到 `test_backend_out.txt` / `test_upload_out.txt` / `test_media_out.txt` /
-`test_ui_out.txt` / `test_server_out.txt`。合计 **358 项断言**。
+`test_ui_out.txt` / `test_server_out.txt`。合计 **377 项断言**。
 
 - `test_backend.py` 拦截 `urllib.request.urlopen`，断言视频用 `input.media` 数组、
   图像用 OpenAI 兼容平铺结构、`n` 是整数、`size` 用字母 x、互斥规则、模式降级、素材分档上限；
+  素材上传按官方现行结构 mock（只回 `file_id`，要再查一次才拿得到 url）；
   另在**临时沙箱**里验证 `purge_uploads()` 的文件数/字节数/幂等/跳过非空子目录——绝不碰真实 `uploads/`。
 - `test_upload.py` 在浏览器里用 canvas 造一张真 PNG，走完整上传链路，再检查
   返回的素材 URL 带没带 `/uploads/` 前缀、图片能不能解码、块里的大图元素尺寸对不对、灯箱能不能开关。
@@ -364,7 +365,7 @@ wan3画布/
 ├── test_ui.py         无头浏览器 DOM 断言
 ├── test_server.py     服务集成测试
 ├── docs/
-│   └── dev-notes.md   开发笔记：踩过的 32 个坑
+│   └── dev-notes.md   开发笔记：踩过的 33 个坑
 ├── CHANGELOG.md       变更记录
 ├── LICENSE            MIT
 ├── .env.example       Key 模板
