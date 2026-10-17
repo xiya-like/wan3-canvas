@@ -878,14 +878,22 @@ PROBE = r"""
       W.addEdge(img.id, v.id, 'in');
       W.render();
 
+      var phOf = function(id){
+        // omni 用 .pEdit（placeholder 落在 data-ph），其余还是 textarea.prompt
+        var vEl = nodeEl(id);
+        var ta = vEl.querySelector('textarea.prompt');
+        if (ta) return ta.placeholder;
+        var p = vEl.querySelector('.pEdit');
+        return p ? (p.getAttribute('data-ph') || '') : '';
+      };
+
       var vEl = nodeEl(v.id);
       ok('多参考模式渲染出输入前缀', !!vEl.querySelector('.promptPre'),
          'pre=' + !!vEl.querySelector('.promptPre'));
       ok('输入前缀带 @ 徽章', !!vEl.querySelector('.promptPre .at'));
       ok('输入框让出前缀的位置', /hasPre/.test(vEl.querySelector('.promptBox').className));
       ok('多参考模式 placeholder 与原站一致',
-         vEl.querySelector('textarea.prompt').placeholder === '使用参考内容，例如：@图片1 @视频1 @音频1',
-         vEl.querySelector('textarea.prompt').placeholder);
+         phOf(v.id) === '使用参考内容，例如：@图片1 @视频1 @音频1', phOf(v.id));
 
       // 非多参考模式不该有这个前缀（用户说的触发条件是「为多参考生成」）
       W.S.edges.length = 0;
@@ -893,8 +901,7 @@ PROBE = r"""
       W.render();
       ok('非多参考模式没有输入前缀', !nodeEl(v.id).querySelector('.promptPre'));
       ok('非多参考模式 placeholder 变回描述文案',
-         nodeEl(v.id).querySelector('textarea.prompt').placeholder === '描述你想要生成的视频内容',
-         nodeEl(v.id).querySelector('textarea.prompt').placeholder);
+         phOf(v.id) === '描述你想要生成的视频内容', phOf(v.id));
 
       // 文本镜像态是只读的，也不该显示前缀
       W.S.nodes.length = 0; W.S.edges.length = 0;
@@ -1006,6 +1013,109 @@ PROBE = r"""
       document.dispatchEvent(new KeyboardEvent('keydown', {key:'r', ctrlKey:true, bubbles:true}));
       ok('Ctrl+R 不触发重命名', !inputOf(img2.id));
       W.S.sel = null;
+    })();
+
+    /* ---- 33. 多参考模式输入 @ 选素材（原站截图 2026-10-16 223709 / 224059 / 224342） ----
+       只有「有真实内容」的上游块会进列表；选中后插成内联芯片，
+       并且不能吞掉用户自己已经打的那段文字（截图里是 "use ... to ..."）。 */
+    (function(){
+      function caretEnd(el){
+        var s = window.getSelection(), r = document.createRange();
+        r.setStart(el, el.childNodes.length); r.collapse(true);
+        s.removeAllRanges(); s.addRange(r);
+      }
+      function type(ed, txt){          // 在末尾追加文字并派发 input（别用 textContent=，那会冲掉芯片）
+        ed.focus();
+        if (txt) ed.appendChild(document.createTextNode(txt));
+        caretEnd(ed);
+        ed.dispatchEvent(new InputEvent('input', {bubbles:true}));
+      }
+      function ed(id){ return nodeEl(id).querySelector('.pEdit'); }
+      function pop(id){ return nodeEl(id).querySelector('.atPop'); }
+      function prompt(id){ return W.S.nodes.filter(function(n){ return n.id === id; })[0].prompt; }
+
+      W.S.nodes.length = 0; W.S.edges.length = 0; W.S.sel = null; W.S.at = null; W.S.atNode = null;
+      var v = W.addNode('video', 500, 100);
+      v.params.mode = 'omni'; v.showFrames = false;
+      var full = W.addNode('image', 100, 100);
+      full.img = { url:'/media/a.png', name:'a.png' };
+      var blank = W.addNode('image', 100, 500);      // 空块，没有 img
+      W.addEdge(full.id, v.id, 'in');
+      W.addEdge(blank.id, v.id, 'in');
+      W.render();
+
+      ok('omni 模式用 contenteditable 而不是 textarea', !!ed(v.id) && !nodeEl(v.id).querySelector('textarea.prompt'));
+
+      // a) 输入 @ 弹出列表，只含有内容的块
+      type(ed(v.id), '@');
+      ok('输入 @ 后列表弹出', pop(v.id).classList.contains('show'));
+      var titles = all('.atPop .atTitle').map(function(x){ return x.textContent; }).join('|');
+      ok('列表按类型分组，标题是「图片节点」', titles === '图片节点', titles);
+      var labels = all('.atPop .atItem').map(function(x){ return x.textContent.trim(); });
+      ok('列表只有 1 项，空块不进列表', labels.length === 1, labels.join(','));
+      ok('列表项叫「图片 1」', labels[0] === '图片 1', labels[0]);
+
+      // b) 选中：@ 换成芯片，自己打的字要留下
+      ed(v.id).textContent = 'use @';
+      type(ed(v.id), '');
+      click(nodeEl(v.id).querySelector('.atPop .atItem'));
+      var chip = nodeEl(v.id).querySelector('.mChip');
+      ok('选中后插入一个内联芯片', nodeEl(v.id).querySelectorAll('.mChip').length === 1);
+      ok('芯片带引用标记', !!chip && chip.dataset.ref === '图片:1', chip && chip.dataset.ref);
+      ok('芯片标签用 .mLb（.lb 已被灯箱占用）', !!nodeEl(v.id).querySelector('.mLb'));
+      ok('芯片标签没被同名规则隐藏',
+         getComputedStyle(nodeEl(v.id).querySelector('.mLb')).display !== 'none');
+      ok('芯片有实际宽度', chip.getBoundingClientRect().width > 40,
+         Math.round(chip.getBoundingClientRect().width) + 'px');
+      ok('模型里存的是 @图片1', prompt(v.id).indexOf('@图片1') >= 0, JSON.stringify(prompt(v.id)));
+      ok('用户自己打的 use 保留下来了', prompt(v.id).indexOf('use') === 0, JSON.stringify(prompt(v.id)));
+      ok('选中后列表收起', !pop(v.id).classList.contains('show'));
+
+      // c) 选中后还能接着打字
+      ed(v.id).appendChild(document.createTextNode('to ...'));
+      type(ed(v.id), '');
+      ok('后续文字接得上',
+         prompt(v.id).indexOf('use') === 0 && prompt(v.id).indexOf('@图片1') > 0 &&
+         prompt(v.id).indexOf('to ...') > 0, JSON.stringify(prompt(v.id)));
+
+      // d) 状态只存纯文本，重绘后芯片要还原
+      W.render();
+      ok('重绘后芯片从纯文本还原', nodeEl(v.id).querySelectorAll('.mChip').length === 1,
+         'n=' + nodeEl(v.id).querySelectorAll('.mChip').length);
+
+      // e) 点芯片移除
+      mouse(nodeEl(v.id).querySelector('.mChip'), 'mousedown');
+      ok('点芯片可移除', nodeEl(v.id).querySelectorAll('.mChip').length === 0);
+      ok('移除后文字还在', prompt(v.id).indexOf('use') === 0 && prompt(v.id).indexOf('@图片1') < 0,
+         JSON.stringify(prompt(v.id)));
+
+      // f) 第二个有内容的块接上 -> 两项
+      var full2 = W.addNode('image', 100, 700);
+      full2.img = { url:'/media/b.png', name:'b.png' };
+      W.addEdge(full2.id, v.id, 'in');
+      W.render();
+      type(ed(v.id), '@');
+      var l2 = all('.atPop .atItem').map(function(x){ return x.textContent.trim(); }).join(',');
+      ok('两个有内容的块时列出 图片 1 / 图片 2', l2 === '图片 1,图片 2', l2);
+
+      // g) 全是空块时不弹列表
+      W.S.nodes.length = 0; W.S.edges.length = 0; W.S.at = null; W.S.atNode = null;
+      var v2 = W.addNode('video', 300, 100);
+      v2.params.mode = 'omni'; v2.showFrames = false;
+      var e1 = W.addNode('image', 40, 300);
+      W.addEdge(e1.id, v2.id, 'in');
+      W.render();
+      type(ed(v2.id), '@');
+      ok('上游全是空块时不弹列表', !pop(v2.id).classList.contains('show'));
+      ok('上游全是空块时没有可选项', all('.atPop .atItem').length === 0);
+
+      // h) 非 omni 仍是普通 textarea，@ 逻辑不该出现
+      W.S.nodes.length = 0; W.S.edges.length = 0;
+      var v3 = W.addNode('video', 300, 100);
+      v3.params.mode = 't2v'; v3.showFrames = false;
+      W.render();
+      ok('非多参考模式仍是 textarea', !!nodeEl(v3.id).querySelector('textarea.prompt'));
+      ok('非多参考模式没有 @ 编辑器', !nodeEl(v3.id).querySelector('.pEdit'));
     })();
 
   } catch (err){

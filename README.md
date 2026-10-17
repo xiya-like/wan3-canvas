@@ -14,8 +14,8 @@
 
 | 文档 | 内容 |
 |---|---|
-| [`CHANGELOG.md`](CHANGELOG.md) | 20 条变更记录（首版 + 十九次修订） |
-| [`docs/dev-notes.md`](docs/dev-notes.md) | 踩过的 29 个坑，改代码前先看 |
+| [`CHANGELOG.md`](CHANGELOG.md) | 21 条变更记录（首版 + 二十次修订） |
+| [`docs/dev-notes.md`](docs/dev-notes.md) | 踩过的 32 个坑，改代码前先看 |
 
 ---
 
@@ -151,6 +151,24 @@ placeholder 变成「使用参考内容，例如：@图片1 @视频1 @音频1」
 > 前缀只在**可编辑且运行时模式为多参考**时出现。
 > 被文本块镜像时输入框是只读的，不显示前缀。
 
+### 用 @ 引用上游素材
+
+多参考模式下直接在输入框里敲 `@`，会弹出一个选择列表：
+
+- **只有已经有真实内容的块会出现在列表里**，空块不参与
+- 按类型分组，标题是「图片节点 / 视频节点 / 音频节点」
+- 每项带缩略图，名字是「图片 1」「图片 2」，编号和输入框下方那排芯片一致
+- 选中后，触发列表的那个 `@` 会被换成一个**内联芯片**（缩略图 + 名字），
+  **你之前打的字一个字都不会丢**——比如先打 `use`、选完再打 ` to ...`，
+  最后得到的是 `use [图片1] to ...`
+- 点芯片可以把它删掉，文字照旧拼回去
+- 一个可引用的素材都没有时，列表不弹（不做多余提示）
+
+> **状态里只存纯文本**：芯片在文本中就是 `@图片1` 这个词。
+> 导出/导入、文本镜像、后端提交全都不用改，芯片只是显示层。
+> 为了能画出真正的内联方块，多参考的输入框从 `<textarea>` 换成了
+> `contenteditable`——其余模式仍然是普通输入框，行为完全不变。
+
 ### 调参数
 
 鼠标**悬停或选中**生成块，块上方浮出一条工具条（可拖动）：
@@ -269,7 +287,7 @@ placeholder 变成「使用参考内容，例如：@图片1 @视频1 @音频1」
 python test_backend.py   # 82 项：请求体结构 + 校验分支 + 启动清理（mock urlopen）
 python test_upload.py    # 20 项：真实上传 → URL 可达 → 图片解码 → 灯箱（只写本地）
 python test_media.py     #  9 项：重绘/拖动/点空白都不能打断播放中的媒体
-python test_ui.py        # 206 项：无头浏览器 DOM 断言（真实 MouseEvent）
+python test_ui.py        # 228 项：无头浏览器 DOM 断言（真实 MouseEvent）
 python test_server.py    # 19 项：真启动服务 + 启动清理 + 路由 + 静态白名单
 ```
 
@@ -281,7 +299,7 @@ python test_server.py    # 19 项：真启动服务 + 启动清理 + 路由 + �
 > `_shot.png`、`_zshot.png` 和五个 `test_*_out.txt`。
 
 结果分别写到 `test_backend_out.txt` / `test_upload_out.txt` / `test_media_out.txt` /
-`test_ui_out.txt` / `test_server_out.txt`。合计 **336 项断言**。
+`test_ui_out.txt` / `test_server_out.txt`。合计 **358 项断言**。
 
 - `test_backend.py` 拦截 `urllib.request.urlopen`，断言视频用 `input.media` 数组、
   图像用 OpenAI 兼容平铺结构、`n` 是整数、`size` 用字母 x、互斥规则、模式降级、素材分档上限；
@@ -346,7 +364,7 @@ wan3画布/
 ├── test_ui.py         无头浏览器 DOM 断言
 ├── test_server.py     服务集成测试
 ├── docs/
-│   └── dev-notes.md   开发笔记：踩过的 29 个坑
+│   └── dev-notes.md   开发笔记：踩过的 32 个坑
 ├── CHANGELOG.md       变更记录
 ├── LICENSE            MIT
 ├── .env.example       Key 模板
@@ -374,7 +392,7 @@ wan3画布/
 
 ## 开发笔记
 
-改代码前踩过的 **29 个坑**都在 [`docs/dev-notes.md`](docs/dev-notes.md)。
+改代码前踩过的 **32 个坑**都在 [`docs/dev-notes.md`](docs/dev-notes.md)。
 每一条都对应一个真实存在过的 bug，比如：
 
 - `render()` 会销毁重建所有节点，`<video>`/`<audio>` 也在内 —— 播放器被重置回 0:00 的元凶
@@ -409,7 +427,7 @@ wan3画布/
 
 ## 更新日志
 
-完整变更记录在 [`CHANGELOG.md`](CHANGELOG.md)，目前 **20 条**（首版 + 十九次修订），按时间倒序。
+完整变更记录在 [`CHANGELOG.md`](CHANGELOG.md)，目前 **21 条**（首版 + 二十次修订），按时间倒序。
 
 ---
 

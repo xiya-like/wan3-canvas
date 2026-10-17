@@ -145,6 +145,36 @@ textarea.prompt:disabled{opacity:.6}
 .promptPre .at{width:15px;height:15px;border-radius:50%;background:#2f6bff;color:#fff;
   font-size:10px;font-style:normal;line-height:15px;text-align:center}
 .promptBox.hasPre textarea.prompt{padding-left:52px}
+/* 多参考模式的输入框用 contenteditable，才能在里面放真正的内联芯片。
+   textarea 只能存纯文本，做不出 @图片1 那种方块。 */
+.pEdit{min-height:62px;background:#17171a;border:1px solid var(--line);border-radius:8px;
+  padding:7px 9px;font-size:12px;line-height:1.55;color:var(--tx);outline:none;
+  white-space:pre-wrap;word-break:break-word}
+.pEdit:focus{border-color:var(--ac)}
+.pEdit:empty::before{content:attr(data-ph);color:var(--tx3)}
+.promptBox.hasPre .pEdit{padding-left:52px}
+/* 引用芯片：不可编辑的原子，文本序列化成 @图片1，纯文字界面读到的也是这个 */
+.mChip{display:inline-flex;align-items:center;gap:4px;padding:1px 7px;margin:0 1px;
+  border-radius:10px;border:1px solid var(--line);background:#1f1f23;font-size:11px;
+  vertical-align:middle;user-select:none;cursor:pointer;width:auto;max-width:170px}
+.mChip img{width:13px;height:13px;border-radius:3px;object-fit:cover;flex:none}
+/* 类名必须带 m 前缀：.lb 已经被「灯箱预览」占了（display:none 的全屏层），
+   直接叫 .lb 会被那条规则整个隐藏掉 —— 表现就是芯片只剩一个小缩略图方块。
+   flex:none 也要留着：overflow:hidden 会让 min-width:auto 失效，不锁死标签会被 flex 压扁。 */
+.mChip .mLb{flex:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.45}
+.mChip.img{border-color:#5c3a1d;color:#c98a4b}
+.mChip.vid{border-color:#3a2a5c;color:#9b86e0}
+.mChip.aud{border-color:#1d4436;color:#4fbf8a}
+/* 输入 @ 弹出的选择列表 */
+.atPop{position:absolute;left:9px;top:36px;z-index:6;min-width:168px;max-height:196px;overflow:auto;
+  background:#1e1e22;border:1px solid var(--line);border-radius:9px;padding:4px;
+  box-shadow:0 10px 28px #0009;display:none}
+.atPop.show{display:block}
+.atPop .atTitle{font-size:10px;color:var(--tx3);padding:4px 7px 2px}
+.atPop .atItem{display:flex;align-items:center;gap:8px;padding:5px 7px;border-radius:6px;
+  cursor:pointer;font-size:11.5px;color:var(--tx2)}
+.atPop .atItem:hover{background:#2d2d33;color:var(--tx)}
+.atPop .atItem img{width:24px;height:24px;border-radius:5px;object-fit:cover;background:#1a1a1c;flex:none}
 .opts{display:flex;flex-direction:column;gap:5px}
 .opt{text-align:left;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:#17171a;font-size:12px;color:var(--tx2);transition:.12s}
 .opt:hover{border-color:var(--ac);color:var(--tx);background:#1f1f24}
@@ -288,6 +318,7 @@ const S = {
   proj: '未命名项目', history: [], clipboard: null,
   pop: null, ctx: null, renaming: null, dropOver: false,
   dbl: null,                    // 上一次落在块名上的按下，用来手工判双击（见 initCanvas）
+  at: null, atNode: null,        // @ 引用：触发信息 { node, start } 和当前打开列表的块 id
   fileHandle: null,        // 当前工作流文件的 FileSystemFileHandle，保存时原地覆盖
   fileName: '',            // 目标文件名，给用户看清楚会覆盖谁
   fileNodeCount: 0,        // 上次保存时有多少个块 —— 防止误把空画布覆盖上去
@@ -396,8 +427,234 @@ function upstreamMedia(n){
         : { node:u, kind:'image', chip:'图片', local:u.img.url });
 }
 
-/* ===================== 费用 ===================== */
-function videoCost(n){
+/* ===================== 多参考：@ 引用 ===================== */
+/**
+ * 引用芯片和纯文本之间来回转换。
+ *
+ * 状态里只存**纯文本**，芯片在文本里就是 `@图片1` 这个词（不带空格）。
+ * 这样导出/导入、镜像、后端提交全都不用改，芯片只是显示层。
+ * 芯片节点额外带 data-ref="图片:1"，序列化时优先用它，不靠正则猜。
+ */
+const REF_RE = /@(图片|视频|音频)(\d+)/;
+
+function refLabel(m){ return m.kind + ' ' + m.idx; }          // 界面上显示「图片 1」
+function refToken(m){ return '@' + m.kind + m.idx; }         // 存进状态的是「@图片1」
+
+function chipNode(m, thumb){
+  const s = document.createElement('span');
+  s.className = 'mChip ' + (m.cls || '');      // cls 是 img/vid/aud，别拿中文的 kind 当类名
+  s.contentEditable = 'false';
+  s.dataset.ref = m.kind + ':' + m.idx;
+  s.title = '点击移除这个引用';
+  if (thumb) s.appendChild(thumb);
+  const lb = document.createElement('span');
+  lb.className = 'mLb';                           // 别叫 .lb，那已被灯箱占用
+  lb.textContent = refLabel(m);
+  s.appendChild(lb);
+  return s;
+}
+function thumbOf(url){
+  const im = document.createElement('img');
+  im.src = url;
+  return im;
+}
+/** 编辑器 DOM -> 纯文本（芯片折成 @图片1） */
+function editToText(ed){
+  let out = '';
+  (function walk(node){
+    node.childNodes.forEach(c => {
+      if (c.nodeType === 3){ out += c.nodeValue; return; }
+      if (c.nodeType !== 1) return;
+      const ref = c.dataset && c.dataset.ref;
+      if (ref){
+        const i = ref.indexOf(':');
+        out += '@' + ref.slice(0, i) + ref.slice(i + 1);
+        return;
+      }
+      if (c.tagName === 'BR'){ out += '\n'; return; }
+      walk(c);
+    });
+  })(ed);
+  return out;
+}
+/** 纯文本 -> 编辑器 DOM：把 @图片1 之类的词换成芯片，其余原样保留 */
+function textToEdit(ed, text, list){
+  ed.textContent = '';
+  if (!text) return;
+  // 一次只认一组引用：按出现顺序把 @图片1 依次对上 list 里的第 N 项
+  let rest = String(text), guard = 0;
+  while (guard++ < 200){
+    const m = rest.match(REF_RE);
+    if (!m) break;
+    const kind = m[1], idx = parseInt(m[2], 10);
+    const hit = list.find(x => x.kind === kind && x.idx === idx);
+    if (!hit){                       // 对不上的引用就当普通文字留着，别吞
+      const head = rest.slice(0, m.index + m[0].length);
+      ed.appendChild(document.createTextNode(head));
+      rest = rest.slice(m.index + m[0].length);
+      continue;
+    }
+    if (m.index > 0) ed.appendChild(document.createTextNode(rest.slice(0, m.index)));
+    ed.appendChild(chipNode(hit, hit.local ? thumbOf(hit.local) : null));
+    rest = rest.slice(m.index + m[0].length);
+  }
+  if (rest) ed.appendChild(document.createTextNode(rest));
+}
+
+/** 给某个视频块算出可引用的上游素材，编号从 1 起，和块内芯片行一致。
+    kind 是界面上的中文词（图片/视频/音频），cls 是配色用的 CSS 类（img/vid/aud）。 */
+function refList(n){
+  return upstreamMedia(n).map((m, i) => ({ kind:m.chip, cls:m.kind, idx:i + 1, node:m.node, local:m.local }));
+}
+
+/** 光标前那段文本里有没有刚敲的 @xxx（有就返回触发信息） */
+function atTrigger(ed){
+  const sel = window.getSelection();
+  if (!sel || !sel.rangeCount) return null;
+  const r = sel.getRangeAt(0);
+  if (!r.collapsed || !ed.contains(r.startContainer)) return null;
+  const pre = textBefore(ed, r.startContainer, r.startOffset);
+  const m = pre.match(/@([^\s@]*)$/);
+  if (!m) return null;
+  return { start:pre.length - m[0].length, query:m[1] };
+}
+
+/** 从编辑区开头到某个位置的纯文本（芯片按 @图片1 计长） */
+function textBefore(root, node, offset){
+  const r = document.createRange();
+  r.setStart(root, 0);
+  try { r.setEnd(node, offset); } catch (e){ return ''; }
+  const frag = r.cloneContents();
+  const box = document.createElement('div');
+  box.appendChild(frag);
+  return editToText(box);
+}
+
+/** 把编辑器里的纯文本下标换算成 DOM 位置（落在芯片内部就取芯片边界） */
+function posToPoint(root, pos){
+  let acc = 0, hit = null;
+  const walk = (node, parent) => {
+    if (hit) return;
+    for (let i = 0; i < node.childNodes.length; i++){
+      if (hit) return;
+      const c = node.childNodes[i];
+      if (acc === pos){ hit = { node:parent, offset:i }; return; }
+      if (c.nodeType === 3){
+        const len = c.nodeValue.length;
+        if (pos < acc + len){ hit = { node:c, offset:pos - acc }; return; }
+        acc += len;
+      } else if (c.nodeType === 1){
+        const ref = c.dataset && c.dataset.ref;
+        if (ref){
+          const t = '@' + ref.replace(':', '');
+          if (pos < acc + t.length){ hit = { node:parent, offset:i }; return; }   // 落在芯片内部 -> 取它前面
+          if (pos === acc + t.length){ hit = { node:parent, offset:i + 1 }; return; }
+          acc += t.length;
+        } else if (c.tagName === 'BR'){
+          if (pos < acc + 1){ hit = { node:parent, offset:i }; return; }
+          acc += 1;
+        } else walk(c, node);
+      }
+    }
+  };
+  walk(root, root);
+  return hit || { node:root, offset:root.childNodes.length };
+}
+
+function pickAt(root, pos){
+  const r = posToPoint(root, pos);
+  const range = document.createRange();
+  range.setStart(r.node, r.offset);
+  range.collapse(true);
+  return range;
+}
+
+function closeAt(){
+  S.atNode = null;
+  document.querySelectorAll('.atPop.show').forEach(p => { p.classList.remove('show'); p.innerHTML = ''; });
+}
+
+/** 打开 @ 选择列表（只列有真实内容的上游块） */
+function openAt(nodeId, items, query){
+  const box = document.querySelector('.promptBox[data-node="' + nodeId + '"]');
+  const pop = box && box.querySelector('.atPop');
+  if (!pop) return;
+  const q = (query || '').trim();
+  const hit = items.filter(m => !q || refLabel(m).indexOf(q) >= 0 || refToken(m).indexOf(q) >= 0);
+  // 一个可引用的都没有就不弹 —— 原站截图里空块只是「不出现」，没有额外的空列表提示，
+  // 这里不去自创一个没依据的界面
+  if (!hit.length){ closeAt(); return; }
+  // 按类型分组，原站截图里的分组标题就是「图片节点」这种
+  const groups = [];
+  hit.forEach(m => {
+    let g = groups.find(x => x.kind === m.kind);
+    if (!g){ g = { kind:m.kind, items:[] }; groups.push(g); }
+    g.items.push(m);
+  });
+  const titleOf = { 图片:'图片节点', 视频:'视频节点', 音频:'音频节点' };
+  pop.innerHTML = groups.map(g =>
+    '<div class="atTitle">' + (titleOf[g.kind] || g.kind) + '</div>' +
+    g.items.map(m => '<div class="atItem" data-idx="' + m.idx + '">' +
+      (m.local ? '<img src="' + m.local + '">' : '') +
+      '<span>' + refLabel(m) + '</span></div>').join('')
+  ).join('');
+  pop.classList.add('show');
+  S.atNode = nodeId;
+}
+
+/** 选中一项：把触发列表的那个 @xxx 换成芯片，其余文字原样保留 */
+function insertRef(nodeId, idx){
+  const box = document.querySelector('.promptBox[data-node="' + nodeId + '"]');
+  const ed = box && box.querySelector('.pEdit');
+  if (!ed) return;
+  const n = nodeById(nodeId);
+  const hit = refList(n).find(m => m.idx === idx);
+  if (!hit) return;
+  const start = (S.at && S.at.node === nodeId) ? S.at.start : editToText(ed).length;
+  const from = pickAt(ed, start);
+  const sel = window.getSelection();
+  let end = { node:ed, offset:ed.childNodes.length };
+  if (sel && sel.rangeCount && ed.contains(sel.getRangeAt(0).startContainer)){
+    const r = sel.getRangeAt(0);
+    end = { node:r.startContainer, offset:r.startOffset };
+  }
+  const del = document.createRange();
+  del.setStart(from.startContainer, from.startOffset);
+  del.setEnd(end.node, end.offset);
+  del.deleteContents();
+  const chip = chipNode(hit, hit.local ? thumbOf(hit.local) : null);
+  del.insertNode(chip);
+  // 芯片后面补一个空格，免得紧接着打的字贴在方块上
+  del.collapse(false);
+  del.insertNode(document.createTextNode(' '));
+  const after = document.createRange();
+  after.setStartAfter(chip);
+  after.collapse(true);
+  sel.removeAllRanges(); sel.addRange(after);
+  n.prompt = editToText(ed);
+  S.at = null;
+  closeAt();
+  ed.focus();
+  softSync();
+}
+
+/** 点芯片移除：删掉这个方块，文字照旧拼回去 */
+function removeChip(nodeId, chip){
+  const box = document.querySelector('.promptBox[data-node="' + nodeId + '"]');
+  const ed = box && box.querySelector('.pEdit');
+  if (!ed) return;
+  const n = nodeById(nodeId);
+  const r = document.createRange();
+  r.setStartBefore(chip);
+  r.setEndAfter(chip);
+  r.deleteContents();
+  const sel = window.getSelection();
+  sel.removeAllRanges(); sel.addRange(r);
+  n.prompt = editToText(ed);
+  softSync();
+}
+
+/* ===================== 费用 ===================== */function videoCost(n){
   const p = n.params;
   return (S.cfg.videoCost[p.resolution] != null ? S.cfg.videoCost[p.resolution] : 0.42) * p.duration;
 }
@@ -792,10 +1049,19 @@ function bodyHTML(n){
   // 文本镜像态下输入框是只读的、不该显示这个，所以只在可编辑且为 omni 时出。
   const pre = (!mt.on && rm.mode === 'omni')
     ? '<span class="promptPre">输入<i class="at">@</i></span>' : '';
+  // omni 用 contenteditable：只有它能在文字中间插真正的引用芯片（截图 2026-10-16 224342）。
+  // 其余情况仍是普通 textarea，交互与状态完全不变。
+  const editable = (!mt.on && rm.mode === 'omni');
 
-  return '<div class="promptBox' + (pre ? ' hasPre' : '') + '">' + pre +
-      '<textarea class="prompt' + (mt.on ? ' mirror' : '') + '" data-bind="prompt"' +
-      (mt.on ? ' readonly' : '') + ' placeholder="' + ph + '">' + esc(mt.on ? mt.text : n.prompt) + '</textarea></div>' +
+  const boxOpen = '<div class="promptBox' + (pre ? ' hasPre' : '') + '" data-node="' + n.id + '">' + pre;
+  const field = editable
+    ? '<div class="pEdit" contenteditable="true" spellcheck="false" data-edit="' + n.id + '" data-ph="' +
+      esc(ph) + '"></div>'
+    : '<textarea class="prompt' + (mt.on ? ' mirror' : '') + '" data-bind="prompt"' +
+      (mt.on ? ' readonly' : '') + ' placeholder="' + ph + '">' + esc(mt.on ? mt.text : n.prompt) + '</textarea>';
+
+  return boxOpen + field +
+    (editable ? '<div class="atPop" data-atpop="' + n.id + '"></div>' : '') + '</div>' +
     chips + frames +
     (!mt.on && !isSink ? '<div class="opts">' +
       '<button class="opt" data-act="upVid">↑ 视频上传</button>' +
@@ -972,6 +1238,9 @@ function renderInner(){
   S.nodes.forEach(n => {
     const el = W.querySelector('.node[data-id="' + n.id + '"]');
     if (!el) return;
+    // 多参考的编辑器是空的，芯片得从纯文本灌回去（内容会影响块高，必须在测量之前）
+    const ed = el.querySelector('.pEdit');
+    if (ed) textToEdit(ed, n.prompt || '', refList(n));
     n._h = el.offsetHeight || 120;
     placeFrameDots(n, el);
     placePorts(n, el);
@@ -1027,17 +1296,26 @@ function softSync(){
     if (!el) return;
     const r = role(n);
     if (r === 'videoGen' || r === 'imageGen'){
-      const ta = el.querySelector('textarea.prompt');
-      if (ta){
-        const mt = mirrorText(n);
-        ta.readOnly = mt.on;
-        ta.classList.toggle('mirror', mt.on);
-        ta.value = mt.on ? mt.text : (r === 'imageGen' ? n.imgPrompt : n.prompt);
-        if (!mt.on){
-          const rm = resolveVideo(n);
-          ta.placeholder = r === 'imageGen'
-            ? (upstreamImages(n).length ? '描述要如何改造这张参考图…' : '描述你想要的画面…')
-            : (rm.mode === 'omni' ? '使用参考内容，例如：@图片1 @视频1 @音频1' : '描述你想要生成的视频内容');
+      // 多参考模式的 contenteditable：只有它不是当前焦点时才回填，
+      // 否则打字打到一半被重写，光标直接跳走
+      const ed = el.querySelector('.pEdit');
+      if (ed){
+        if (document.activeElement !== ed && editToText(ed) !== (n.prompt || '')){
+          textToEdit(ed, n.prompt || '', refList(n));
+        }
+      } else {
+        const ta = el.querySelector('textarea.prompt');
+        if (ta){
+          const mt = mirrorText(n);
+          ta.readOnly = mt.on;
+          ta.classList.toggle('mirror', mt.on);
+          ta.value = mt.on ? mt.text : (r === 'imageGen' ? n.imgPrompt : n.prompt);
+          if (!mt.on){
+            const rm = resolveVideo(n);
+            ta.placeholder = r === 'imageGen'
+              ? (upstreamImages(n).length ? '描述要如何改造这张参考图…' : '描述你想要的画面…')
+              : (rm.mode === 'omni' ? '使用参考内容，例如：@图片1 @视频1 @音频1' : '描述你想要生成的视频内容');
+          }
         }
       }
       const c = el.querySelector('[data-cost]');
@@ -1580,6 +1858,22 @@ function initCanvas(){
   // 输入框：只更新模型 + 轻量同步，不重建 DOM
   wrap.addEventListener('input', e => {
     const t = e.target;
+    // 多参考模式的 contenteditable：芯片折成 @图片1 存进模型，@ 触发选择列表
+    if (t.classList && t.classList.contains('pEdit')){
+      const n = nodeById(t.dataset.edit);
+      if (!n) return;
+      if (e.isComposing) return;                     // 中文输入法组字中，别去动 DOM
+      n.prompt = editToText(t);
+      const trg = atTrigger(t);
+      if (trg && refList(n).length){
+        S.at = { node:n.id, start:trg.start };
+        openAt(n.id, refList(n), trg.query);
+      } else if (S.atNode === n.id){
+        closeAt(); S.at = null;
+      }
+      softSync();
+      return;
+    }
     const nodeEl = t.closest('.node');
     if (!nodeEl) return;
     const n = nodeById(nodeEl.dataset.id);
@@ -1589,6 +1883,38 @@ function initCanvas(){
     if (b === 'text'){ n.text = t.value; softSync(); }
     else if (b === 'prompt'){ n.prompt = t.value; softSync(); }
     else if (b === 'imgPrompt'){ n.imgPrompt = t.value; softSync(); }
+  });
+
+  // 多参考：点列表项插芯片、点芯片删芯片、点别处收起列表
+  wrap.addEventListener('mousedown', e => {
+    const chip = e.target.closest('.mChip');
+    const item = e.target.closest('.atItem');
+    if (item){
+      e.preventDefault(); e.stopPropagation();
+      const id = item.closest('.promptBox').dataset.node;
+      insertRef(id, Number(item.dataset.idx));
+      return;
+    }
+    if (chip){
+      e.preventDefault(); e.stopPropagation();
+      const box = chip.closest('.promptBox');
+      if (box){
+        const ed = box.querySelector('.pEdit');
+        if (ed) ed.focus();
+        removeChip(box.dataset.node, chip);
+      }
+      return;
+    }
+    if (S.atNode && !e.target.closest('.atPop')){ closeAt(); S.at = null; }
+  }, true);
+
+  // 输入框失焦时收起列表（focusout 会冒泡，用它省得给每个编辑器单独挂）
+  wrap.addEventListener('focusout', e => {
+    if (!e.target.classList || !e.target.classList.contains('pEdit')) return;
+    setTimeout(() => {
+      const a = document.activeElement;
+      if (!a || !(a.classList.contains('atPop') || a.closest('.atPop'))) { closeAt(); S.at = null; }
+    }, 120);
   });
 
   wrap.addEventListener('mouseenter', () => {}, true);
