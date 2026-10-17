@@ -1118,6 +1118,49 @@ PROBE = r"""
       ok('非多参考模式没有 @ 编辑器', !nodeEl(v3.id).querySelector('.pEdit'));
     })();
 
+    /* ---- 34. 费用按「模型 × 分辨率」分档 ----
+       Prime 优速版单价是标准版的 2 倍以上。以前 videoCost() 只看分辨率，
+       选 Prime 时界面显示 ¥2.10，实际扣 ¥4.50 —— 少报一半多。 */
+    (function(){
+      W.S.nodes.length = 0; W.S.edges.length = 0;
+      var v = W.addNode('video', 300, 100);
+      v.params.resolution = '720P'; v.params.duration = 5;
+      W.render();
+
+      function costOf(id){
+        var el = nodeEl(id).querySelector('[data-cost]');
+        return el ? el.textContent : '(没有 cost 元素)';
+      }
+
+      ok('标准版 5s/720P = ¥2.10', Math.abs(W.cost('wan3.0-video').video - 2.10) < 1e-9, W.cost('wan3.0-video').video);
+      ok('Prime  5s/720P = ¥4.50', Math.abs(W.cost('wan3.0-video-prime').video - 4.50) < 1e-9, W.cost('wan3.0-video-prime').video);
+      ok('Prime 明显贵于标准版', W.cost('wan3.0-video-prime').video > W.cost('wan3.0-video').video);
+      ok('DOM 默认显示标准版价', costOf(v.id) === '¥2.10', costOf(v.id));
+
+      // 切到 Prime，DOM 上的价格必须跟着变
+      v.params.model = 'wan3.0-video-prime';
+      W.render();
+      ok('切到 Prime 后 DOM 显示 ¥4.50', costOf(v.id) === '¥4.50', costOf(v.id));
+
+      // 三档分辨率都要分开算
+      v.params.resolution = '480P';
+      ok('Prime  5s/480P = ¥2.25', Math.abs(W.cost('wan3.0-video-prime').video - 2.25) < 1e-9, W.cost('wan3.0-video-prime').video);
+      ok('标准版 5s/480P = ¥1.05', Math.abs(W.cost('wan3.0-video').video - 1.05) < 1e-9, W.cost('wan3.0-video').video);
+      v.params.resolution = '1080P';
+      ok('Prime  5s/1080P = ¥9.00', Math.abs(W.cost('wan3.0-video-prime').video - 9.00) < 1e-9, W.cost('wan3.0-video-prime').video);
+      ok('标准版 5s/1080P = ¥4.20', Math.abs(W.cost('wan3.0-video').video - 4.20) < 1e-9, W.cost('wan3.0-video').video);
+
+      // 时长照常联动
+      v.params.duration = 10;
+      ok('Prime 10s/720P = ¥9.00', (function(){ v.params.resolution='720P';
+             return Math.abs(W.cost('wan3.0-video-prime').video - 9.00) < 1e-9; })(), W.cost('wan3.0-video-prime').video);
+
+      // 认不出的模型退回标准版，不能变成 0 或 NaN
+      v.params.model = 'wan9.9-unknown';
+      var fb = W.cost().video;
+      ok('未知模型退回标准版而不是 0', Math.abs(fb - 4.20) < 1e-9, fb);
+    })();
+
   } catch (err){
     R.push('FAIL | 探针抛异常 | ' + (err && err.message ? err.message : String(err)) + ' @ ' + (err && err.stack ? String(err.stack).split('\n')[1] : ''));
     flush();

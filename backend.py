@@ -93,7 +93,24 @@ IMAGE_MODELS = [
 ]
 IMAGE_SIZES = ["auto", "1024x1024", "1024x1536", "1536x1024", "1440x1440", "1280x720", "720x1280"]
 IMAGE_COST = {"1K": 0.2, "2K": 0.6}
-VIDEO_COST = {"480P": 0.21, "720P": 0.42, "1080P": 0.84}
+
+# 视频按「模型 × 分辨率」两档计价 —— Prime 优速版单价是标准版的 2 倍以上，
+# 合成一张表会把费用显示少报一半多。单位：元/秒（华东以外地域以控制台为准）。
+# 数值取自百炼控制台价格表 2026-10-17：标准版当时仍在 7 折活动期。
+DEFAULT_VIDEO_MODEL = "wan3.0-video"
+VIDEO_COST = {
+    # 标准版：原价 0.3 / 0.6 / 1.2，限时 7 折
+    "wan3.0-video": {"480P": 0.21, "720P": 0.42, "1080P": 0.84},
+    # Prime 优速版：无折扣
+    "wan3.0-video-prime": {"480P": 0.45, "720P": 0.90, "1080P": 1.80},
+}
+
+
+def video_unit_cost(model, resolution):
+    """每秒单价。未知模型退回标准版，未知分辨率退回 720P —— 宁可估算也别让前端拿到 0。"""
+    table = VIDEO_COST.get(model) or VIDEO_COST[DEFAULT_VIDEO_MODEL]
+    return table.get(resolution, table["720P"])
+
 
 # 官方数量上限
 MEDIA_LIMITS = {
@@ -588,6 +605,9 @@ class Handler(BaseHTTPRequestHandler):
         if "last_frame" in kinds and "first_frame" not in kinds:
             raise ApiError(400, "尾帧不能脱离首帧单独存在")
 
+        # 计价要用「实际提交的模型」，否则前端没传 model 时会按 wan3.0-video 算，Prime 就少报了
+        eff_model = b.get("model") or MODEL
+        eff_res = b.get("resolution") or "720P"
         data = submit_video(
             prompt=prompt,
             media=media,
@@ -595,12 +615,12 @@ class Handler(BaseHTTPRequestHandler):
             resolution=b.get("resolution", "720P"),
             ratio=b.get("ratio", "adaptive"),
             audio=bool(b.get("audio", True)),
-            model=b.get("model") or MODEL,
+            model=eff_model,
         )
         out = data.get("output") or {}
         if not out.get("task_id"):
             raise ApiError(502, "提交未返回 task_id: %s" % json.dumps(data, ensure_ascii=False)[:300])
-        cost = VIDEO_COST.get(b.get("resolution") or "720P", 0.42)
+        cost = video_unit_cost(eff_model, eff_res)
         return self._send(200, {
             "ok": True,
             "task_id": out["task_id"],

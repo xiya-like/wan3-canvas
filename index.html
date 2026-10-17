@@ -284,7 +284,8 @@ const DEFAULT_CFG = {
   videoModels: [{ id:'wan3.0-video', name:'Wan 3.0' }, { id:'wan3.0-video-prime', name:'Wan 3.0 Prime' }],
   resolutions: [{ label:'高清', value:'1080P' }, { label:'标准', value:'720P' }, { label:'流畅', value:'480P' }],
   ratios: ['adaptive','16:9','4:3','1:1','3:4','9:16'],
-  videoCost: { '480P':0.21, '720P':0.42, '1080P':0.84 },
+  videoCost: { 'wan3.0-video':{'480P':0.21,'720P':0.42,'1080P':0.84},
+               'wan3.0-video-prime':{'480P':0.45,'720P':0.90,'1080P':1.80} },
   imageModels: [{ id:'qwen-image-3.0-pro', name:'Qwen-Image 3.0 Pro', maxRefs:3 },
                 { id:'qwen-image-3.0', name:'Qwen-Image 3.0', maxRefs:3 },
                 { id:'qwen-image-2.1-pro', name:'Qwen-Image 2.1 Pro', maxRefs:10 },
@@ -654,9 +655,15 @@ function removeChip(nodeId, chip){
   softSync();
 }
 
-/* ===================== 费用 ===================== */function videoCost(n){
+/* ===================== 费用 ===================== */
+/* 按「模型 × 分辨率」取每秒单价。Prime 优速版是标准版的 2 倍以上，
+   只看分辨率会把费用少报一半多。模型认不出就退回标准版。 */
+const VIDEO_COST_FALLBACK = 0.42;
+function videoCost(n){
   const p = n.params;
-  return (S.cfg.videoCost[p.resolution] != null ? S.cfg.videoCost[p.resolution] : 0.42) * p.duration;
+  const tbl = S.cfg.videoCost[p.model] || S.cfg.videoCost['wan3.0-video'] || {};
+  const per = tbl[p.resolution];
+  return (per != null ? per : VIDEO_COST_FALLBACK) * p.duration;
 }
 function imageCost(n){
   const p = n.imgParams;
@@ -2543,7 +2550,11 @@ function boot(){
     addEdge, render, softSync, delNode, delEdge, copyNode, duplicateNode,
     uploadFiles, fillSlot, mediaHTML, bringToFront,
     loadWfText, wfText, saveWf, setCurrentFile, FSA_OK, renderTop, renderHud,
-    cost: () => ({ video: videoCost(S.nodes.find(n => n.type === 'video') || { params:{ resolution:'720P', duration:5 } }) }),
+    cost: (model) => {
+      const n = S.nodes.find(x => x.type === 'video');
+      const params = Object.assign({}, n ? n.params : { resolution:'720P', duration:5 }, model ? { model:model } : null);
+      return { video: videoCost({ params:params }) };
+    },
   };
 }
 function closeAdd(){ $('#addPanel').classList.remove('show'); renderTop(); }

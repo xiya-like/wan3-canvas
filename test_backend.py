@@ -378,6 +378,50 @@ try:
 finally:
     shutil.rmtree(_up, ignore_errors=True)
 
+# ---------------------------------------------------------------- 10. 视频按模型分档计价
+# Prime 优速版单价是标准版的 2 倍以上；合成一张表会把费用少报一半多。
+ok("单价表按模型分组而不是扁平", isinstance(B.VIDEO_COST.get("wan3.0-video"), dict)
+   and isinstance(B.VIDEO_COST.get("wan3.0-video-prime"), dict))
+ok("标准版 480P 单价", B.video_unit_cost("wan3.0-video", "480P") == 0.21)
+ok("标准版 720P 单价", B.video_unit_cost("wan3.0-video", "720P") == 0.42)
+ok("标准版 1080P 单价", B.video_unit_cost("wan3.0-video", "1080P") == 0.84)
+ok("Prime 480P 单价", B.video_unit_cost("wan3.0-video-prime", "480P") == 0.45)
+ok("Prime 720P 单价", B.video_unit_cost("wan3.0-video-prime", "720P") == 0.90)
+ok("Prime 1080P 单价", B.video_unit_cost("wan3.0-video-prime", "1080P") == 1.80)
+ok("Prime 明显贵于标准版（720P）", B.video_unit_cost("wan3.0-video-prime", "720P") > B.video_unit_cost("wan3.0-video", "720P"))
+ok("未知模型退回标准版", B.video_unit_cost("wan9.9", "720P") == B.video_unit_cost("wan3.0-video", "720P"))
+ok("空模型退回标准版", B.video_unit_cost(None, "720P") == 0.42)
+ok("未知分辨率退回 720P", B.video_unit_cost("wan3.0-video-prime", "4K") == 0.90)
+
+_costdir = tempfile.mkdtemp(prefix="wan3_cost_")
+try:
+    _p = os.path.join(_costdir, "c.png")
+    with open(_p, "wb") as _f:
+        _f.write(b"\x89PNG\r\n\x1a\n" + b"0" * 16)
+
+    def _est(model):
+        body = {"prompt": "一只猫", "mode": "i2v", "firstFrame": _p,
+                "duration": 5, "resolution": "720P"}
+        if model:
+            body["model"] = model
+        h = FakeHandler(body)
+        h._handle_generate()
+        return h.captured[1]["estimated_cost"]
+
+    ok("标准版 5s/720P 估价 ¥2.10", _est("wan3.0-video") == 2.10, _est("wan3.0-video"))
+    ok("Prime 5s/720P 估价 ¥4.50", _est("wan3.0-video-prime") == 4.5, _est("wan3.0-video-prime"))
+    ok("不传 model 时按 WAN_MODEL 默认模型计价", _est(None) == 2.10, _est(None))
+
+    # 不传 model、但 .env 把 WAN_MODEL 设成 prime 时，估价必须跟着走 prime
+    _old_model = B.MODEL
+    B.MODEL = "wan3.0-video-prime"
+    try:
+        ok("WAN_MODEL=prime 时不传 model 也按 prime 计价", _est(None) == 4.5, _est(None))
+    finally:
+        B.MODEL = _old_model
+finally:
+    shutil.rmtree(_costdir, ignore_errors=True)
+
 # ---------------------------------------------------------------- 输出
 npass = sum(1 for l in R if l.startswith("PASS"))
 out = "\n".join(R) + "\n\n===== %d/%d passed =====\n" % (npass, len(R))
